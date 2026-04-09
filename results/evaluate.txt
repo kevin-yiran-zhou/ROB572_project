@@ -1,0 +1,23 @@
+=== Evaluation Metrics (MAE, RMSE, Est/GT) ===
+All metrics are grouped by GT distance bins (including ALL).
+
+[small]
+bin           count     mae(m)    rmse(m)     est/gt
+ALL           33648     39.210     55.996      0.441
+0-10           2636      2.572      3.453      0.936
+0-20           8041      4.434      5.719      0.787
+0-50          19789     12.755     16.704      0.600
+
+[base]
+bin           count     mae(m)    rmse(m)     est/gt
+ALL           33648     37.614     54.472      0.493
+0-10           2636      2.298      3.332      1.118
+0-20           8041      4.039      5.363      0.887
+0-50          19789     11.783     15.532      0.666
+
+[large]
+bin           count     mae(m)    rmse(m)     est/gt
+ALL           33648     35.440     52.826      0.565
+0-10           2636      2.365      3.586      1.260
+0-20           8041      3.215      4.471      1.008
+0-50          19789      9.907     13.675      0.766

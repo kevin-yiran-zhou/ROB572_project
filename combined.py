@@ -1,8 +1,8 @@
 """
-Tkinter GUI: RGB + SegFormer segmentation + Depth-Anything on a prefixed sequence (``--seq-dir``).
+Tkinter GUI: RGB + SegFormer + Depth-Anything on a prefixed image sequence.
 
-Depth checkpoint via ``--model``; ``--infer-max-side`` downsamples once for both seg and depth.
-Starts fullscreen; Esc toggles fullscreen. Auto-plays through the sequence once then closes.
+Edit the **Config** block below (no CLI). ``INFER_MAX_SIDE`` applies to both seg and depth.
+Starts fullscreen; Esc toggles fullscreen. Auto-plays once through the sequence then closes.
 """
 
 from __future__ import annotations
@@ -28,27 +28,40 @@ from tkinter import messagebox, ttk
 from PIL import Image, ImageTk
 import matplotlib.cm as mpl_cm
 
-# LUT for depth colormap (faster than calling inferno per pixel each frame).
-_INFERNO_LUT = (mpl_cm.inferno(np.linspace(0.0, 1.0, 256, dtype=np.float64))[:, :3] * 255.0).astype(
-    np.uint8
-)
-
-_SEQ_SUBDIR = Path("lars_v1.0.0_images_seq/test/images_seq")
-_PREFIX = "davimar_seq_30"
-_IMAGE_SUFFIXES = {".jpg"}
 # Depth-Anything
 _DEPTH_PKG = _ROOT / "depth"
 _DEPTH_MODEL_CHOICES = ("small", "base", "large")
 
-# SegFormer (same class colors as ``segmentation/vis.py``)
+# SegFormer package root (weights path default below)
 _SEG_PKG = _ROOT / "segmentation"
+
+# ---------------------------------------------------------------------------
+# Config — edit here (no command-line flags)
+# ---------------------------------------------------------------------------
+DEPTH_MODEL: str = "small"  # "small" | "base" | "large"
+EST_SCALE: float = DEFAULT_EST_SCALE
+INFER_MAX_SIDE: int = 552  # 0 = no resize before seg/depth; else max long edge (px)
+GUI_PREVIEW_MAX: int = 1280  # longest edge for on-screen thumbnails
+
+SEQ_DIR: Path = _ROOT / "lars_v1.0.0_images_seq/test/images_seq"
+# Multiple prefixes: each group is sorted (natural order), then groups are concatenated in list order.
+FILENAME_PREFIXES: list[str] = ["davimar_seq_30", "davimar_seq_31", "davimar_seq_32"]
+IMAGE_SUFFIXES: list[str] = [".jpg"]
+
+SEG_WEIGHTS: Path = _SEG_PKG / "model" / "segformer_baseline.pth"
+SEG_DEVICE: str | None = None  # None = auto; or "cpu", "cuda:0", ...
+# ---------------------------------------------------------------------------
+
+# LUT for depth colormap (faster than calling inferno per pixel each frame).
+_INFERNO_LUT = (mpl_cm.inferno(np.linspace(0.0, 1.0, 256, dtype=np.float64))[:, :3] * 255.0).astype(
+    np.uint8
+)
 _SEG_LUT = np.zeros((256, 3), dtype=np.uint8)
 _SEG_LUT[0] = (255, 0, 0)
 _SEG_LUT[1] = (0, 0, 255)
 _SEG_LUT[2] = (0, 255, 0)
 _SEG_LUT[255] = (0, 0, 0)
 
-_GUI_PREVIEW_SIDE_CAP = 1280
 _rs = getattr(Image, "Resampling", Image)
 _PREVIEW_DOWN_RESAMPLE = getattr(_rs, "BOX", getattr(_rs, "NEAREST", Image.NEAREST))
 
@@ -64,17 +77,34 @@ def _natural_sort_key(path: Path) -> list:
     return key
 
 
+def _normalized_suffixes(suffixes: list[str]) -> frozenset[str]:
+    out: set[str] = set()
+    for s in suffixes:
+        t = s.strip().lower()
+        if not t.startswith("."):
+            t = "." + t
+        out.add(t)
+    return frozenset(out)
+
+
 def _list_sequence_images(seq_dir: Path) -> list[Path]:
     if not seq_dir.is_dir():
         return []
-    paths = [
-        p
-        for p in seq_dir.iterdir()
-        if p.is_file()
-        and p.suffix.lower() in _IMAGE_SUFFIXES
-        and p.name.startswith(_PREFIX)
-    ]
-    return sorted(paths, key=_natural_sort_key)
+    suf = _normalized_suffixes(list(IMAGE_SUFFIXES))
+    seen: set[str] = set()
+    out: list[Path] = []
+    for prefix in FILENAME_PREFIXES:
+        batch = [
+            p
+            for p in seq_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in suf and p.name.startswith(prefix)
+        ]
+        for p in sorted(batch, key=_natural_sort_key):
+            key = str(p.resolve())
+            if key not in seen:
+                seen.add(key)
+                out.append(p)
+    return out
 
 
 def _seg_mask_to_rgb_u8(mask: np.ndarray) -> np.ndarray:
@@ -139,7 +169,7 @@ class CombinedSequenceViewer:
         model: str = "small",
         est_scale: float = DEFAULT_EST_SCALE,
         infer_max_side: int = 552,
-        gui_preview_max: int = _GUI_PREVIEW_SIDE_CAP,
+        gui_preview_max: int = GUI_PREVIEW_MAX,
         seg_weights: Path,
         seg_device: str | None = None,
     ) -> None:
@@ -177,7 +207,8 @@ class CombinedSequenceViewer:
         self._closing = False
 
         self.root = tk.Tk()
-        self.root.title(f"RGB · Seg · Depth ({model}) — {_PREFIX}*")
+        pref = " + ".join(f"{p}*" for p in FILENAME_PREFIXES)
+        self.root.title(f"RGB · Seg · Depth ({model}) — {pref}")
         self.root.minsize(1200, 480)
 
         main = ttk.Frame(self.root, padding=8)
@@ -232,7 +263,7 @@ class CombinedSequenceViewer:
         if not self.paths:
             messagebox.showerror(
                 "No images",
-                f"No files starting with {_PREFIX!r} under:\n{seq_dir.resolve()}",
+                f"No files for prefixes {FILENAME_PREFIXES!r} under:\n{seq_dir.resolve()}",
             )
         else:
             self._start_worker()
@@ -278,7 +309,7 @@ class CombinedSequenceViewer:
     def _status_text(self) -> str:
         n = len(self.paths)
         if n == 0:
-            return f"{self.seq_dir.resolve()}\n(no {_PREFIX}* images)"
+            return f"{self.seq_dir.resolve()}\n(no images for prefixes {FILENAME_PREFIXES})"
         ims = self.infer_max_side
         infer_note = "full res" if ims <= 0 else f"long edge ≤ {ims}px"
         seg_name = self._seg_weights.name
@@ -435,73 +466,32 @@ class CombinedSequenceViewer:
 
 
 def main() -> None:
-    import argparse
+    if DEPTH_MODEL not in _DEPTH_MODEL_CHOICES:
+        raise ValueError(f"DEPTH_MODEL must be one of {_DEPTH_MODEL_CHOICES}, got {DEPTH_MODEL!r}")
+    if INFER_MAX_SIDE < 0:
+        raise ValueError(f"INFER_MAX_SIDE must be >= 0, got {INFER_MAX_SIDE}")
+    if 0 < INFER_MAX_SIDE < 128:
+        raise ValueError(f"INFER_MAX_SIDE must be 0 or >= 128, got {INFER_MAX_SIDE}")
+    if GUI_PREVIEW_MAX < 320:
+        raise ValueError(f"GUI_PREVIEW_MAX must be >= 320, got {GUI_PREVIEW_MAX}")
+    if not FILENAME_PREFIXES or not all(isinstance(p, str) and p for p in FILENAME_PREFIXES):
+        raise ValueError("FILENAME_PREFIXES must be a non-empty list of non-empty strings")
+    if not IMAGE_SUFFIXES:
+        raise ValueError("IMAGE_SUFFIXES must be a non-empty list")
 
-    p = argparse.ArgumentParser(description="RGB + segmentation + depth GUI on a prefixed image sequence.")
-    p.add_argument(
-        "--model",
-        type=str,
-        choices=list(_DEPTH_MODEL_CHOICES),
-        default="small",
-        help="Checkpoint under depth/model/<model>/ (default: small).",
-    )
-    p.add_argument(
-        "--infer-max-side",
-        type=int,
-        default=552,
-        metavar="N",
-        help=(
-            "Before seg + depth: if N>0, resize so the longest side is at most N pixels. "
-            "N=0 means full resolution. Default: %(default)s."
-        ),
-    )
-    p.add_argument(
-        "--seg-weights",
-        type=Path,
-        default=None,
-        help=f"SegFormer .pth (default: <repo>/{(_SEG_PKG / 'model' / 'segformer_baseline.pth').as_posix()})",
-    )
-    p.add_argument(
-        "--seg-device",
-        type=str,
-        default=None,
-        metavar="DEV",
-        help='Torch device for segmentation (e.g. "cpu", "cuda:0"). Default: auto.',
-    )
-    p.add_argument(
-        "--preview-max",
-        type=int,
-        default=_GUI_PREVIEW_SIDE_CAP,
-        metavar="PX",
-        help=(
-            "Max longest edge (pixels) for panel thumbnails in the GUI only. "
-            "Default: %(default)s."
-        ),
-    )
-    p.add_argument(
-        "--seq-dir",
-        type=Path,
-        default=None,
-        help=f"Override image folder (default: <repo>/{_SEQ_SUBDIR.as_posix()})",
-    )
-    args = p.parse_args()
-    if args.infer_max_side < 0:
-        p.error("--infer-max-side must be >= 0")
-    if 0 < args.infer_max_side < 128:
-        p.error("--infer-max-side must be 0 or >= 128")
-    if args.preview_max < 320:
-        p.error("--preview-max must be >= 320")
-    seq_dir = (args.seq_dir or (_ROOT / _SEQ_SUBDIR)).resolve()
-    seg_w = (args.seg_weights or (_SEG_PKG / "model" / "segformer_baseline.pth")).resolve()
+    seq_dir = Path(SEQ_DIR).resolve()
+    seg_w = Path(SEG_WEIGHTS).resolve()
     if not seg_w.is_file():
-        p.error(f"--seg-weights not found: {seg_w}")
+        raise FileNotFoundError(f"SEG_WEIGHTS not found: {seg_w}")
+
     app = CombinedSequenceViewer(
         seq_dir,
-        model=args.model,
-        infer_max_side=args.infer_max_side,
-        gui_preview_max=args.preview_max,
+        model=DEPTH_MODEL,
+        est_scale=EST_SCALE,
+        infer_max_side=INFER_MAX_SIDE,
+        gui_preview_max=GUI_PREVIEW_MAX,
         seg_weights=seg_w,
-        seg_device=args.seg_device,
+        seg_device=SEG_DEVICE,
     )
     app.run()
 

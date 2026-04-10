@@ -11,6 +11,8 @@ import queue
 import re
 import sys
 import threading
+import time
+import tkinter.font as tkfont
 from pathlib import Path
 
 import numpy as np
@@ -36,12 +38,13 @@ _DEPTH_MODEL_CHOICES = ("small", "base", "large")
 _SEG_PKG = _ROOT / "segmentation"
 
 # ---------------------------------------------------------------------------
-# Config — edit here (no command-line flags)
+# Config - edit here (no command-line flags)
 # ---------------------------------------------------------------------------
 DEPTH_MODEL: str = "small"  # "small" | "base" | "large"
 EST_SCALE: float = DEFAULT_EST_SCALE
 INFER_MAX_SIDE: int = 552  # 0 = no resize before seg/depth; else max long edge (px)
 GUI_PREVIEW_MAX: int = 1280  # longest edge for on-screen thumbnails
+GUI_FONT_PT: int = 16  # base UI font size (labels, buttons, panel titles)
 
 SEQ_DIR: Path = _ROOT / "lars_v1.0.0_images_seq/test/images_seq"
 # Multiple prefixes: each group is sorted (natural order), then groups are concatenated in list order.
@@ -61,6 +64,8 @@ _SEG_LUT[0] = (255, 0, 0)
 _SEG_LUT[1] = (0, 0, 255)
 _SEG_LUT[2] = (0, 255, 0)
 _SEG_LUT[255] = (0, 0, 0)
+
+_SEG_HF_ID = "nvidia/mit-b0"  # matches ``segmentation._pipeline`` backbone
 
 _rs = getattr(Image, "Resampling", Image)
 _PREVIEW_DOWN_RESAMPLE = getattr(_rs, "BOX", getattr(_rs, "NEAREST", Image.NEAREST))
@@ -161,6 +166,17 @@ def _array_to_photo(arr: np.ndarray, max_side: int) -> ImageTk.PhotoImage:
     return ImageTk.PhotoImage(pil)
 
 
+def _format_current_frame_stats(idx: int, n: int, seg_s: float, depth_s: float) -> str:
+    """This frame only: wall time from worker (GUI shows ms only)."""
+    seg_s = max(float(seg_s), 1e-9)
+    depth_s = max(float(depth_s), 1e-9)
+    total_s = seg_s + depth_s
+    return (
+        f"Frame {idx + 1}/{n}\n"
+        f"Seg: {seg_s * 1000:.1f} ms   Depth: {depth_s * 1000:.1f} ms   Total: {total_s * 1000:.1f} ms"
+    )
+
+
 class CombinedSequenceViewer:
     def __init__(
         self,
@@ -205,30 +221,45 @@ class CombinedSequenceViewer:
         self._skip_auto_advance_once = False
         self._fullscreen = True
         self._closing = False
+        self._acc_seg_s = 0.0
+        self._acc_depth_s = 0.0
+        self._acc_timed_frames = 0
 
         self.root = tk.Tk()
         pref = " + ".join(f"{p}*" for p in FILENAME_PREFIXES)
-        self.root.title(f"RGB · Seg · Depth ({model}) — {pref}")
+        self.root.title(f"RGB | Seg | Depth ({model}) - {pref}")
         self.root.minsize(1200, 480)
+        self._apply_ui_fonts()
 
         main = ttk.Frame(self.root, padding=8)
         main.pack(fill=tk.BOTH, expand=True)
 
         self._info_wrap = 880
-        info = ttk.Label(
+        self._lbl_models = ttk.Label(
             main,
-            text=self._status_text(),
+            text=self._models_banner_text(),
             wraplength=self._info_wrap,
+            justify=tk.LEFT,
         )
-        info.pack(fill=tk.X, pady=(0, 6))
-        self._info = info
+        self._lbl_models.pack(fill=tk.X, pady=(0, 4))
+        self._lbl_stats = ttk.Label(
+            main,
+            text=self._stats_placeholder_text(),
+            wraplength=self._info_wrap,
+            justify=tk.LEFT,
+        )
+        self._lbl_stats.pack(fill=tk.X, pady=(0, 6))
 
         panes = ttk.PanedWindow(main, orient=tk.HORIZONTAL)
         panes.pack(fill=tk.BOTH, expand=True)
 
         rgb_f = ttk.LabelFrame(panes, text="RGB", padding=4)
-        seg_f = ttk.LabelFrame(panes, text="Segmentation (SegFormer)", padding=4)
-        dep_f = ttk.LabelFrame(panes, text=f"Depth ({model}, inferno)", padding=4)
+        seg_f = ttk.LabelFrame(panes, text=f"Segmentation | SegFormer ({_SEG_HF_ID})", padding=4)
+        dep_f = ttk.LabelFrame(
+            panes,
+            text=f"Depth | Depth-Anything ({model}, inferno)",
+            padding=4,
+        )
         panes.add(rgb_f, weight=1)
         panes.add(seg_f, weight=1)
         panes.add(dep_f, weight=1)
@@ -240,11 +271,8 @@ class CombinedSequenceViewer:
         self._lbl_depth = ttk.Label(dep_f)
         self._lbl_depth.pack(expand=True)
 
-        self._lbl_busy = ttk.Label(main, text="")
-        self._lbl_busy.pack(fill=tk.X, pady=4)
-
         nav = ttk.Frame(main)
-        nav.pack(fill=tk.X, pady=6)
+        nav.pack(fill=tk.X, pady=8)
         self._btn_play = ttk.Button(nav, text="Pause", command=self._toggle_play)
         self._btn_play.pack(side=tk.LEFT, padx=2)
         ttk.Button(nav, text="Prev", command=self._prev).pack(side=tk.LEFT, padx=2)
@@ -279,8 +307,66 @@ class CombinedSequenceViewer:
         want = int(min(max(sw // 2 - 96, sh - 240, 960), 4096))
         self._gui_preview_max = min(want, self._user_preview_cap)
         self._info_wrap = max(sw - 80, 600)
-        self._info.configure(wraplength=self._info_wrap)
+        self._lbl_models.configure(wraplength=self._info_wrap)
+        self._lbl_stats.configure(wraplength=self._info_wrap)
         self._set_fullscreen(True)
+
+    def _apply_ui_fonts(self) -> None:
+        pt = GUI_FONT_PT
+        for name in ("TkDefaultFont", "TkTextFont", "TkHeadingFont", "TkMenuFont"):
+            try:
+                tkfont.nametofont(name).configure(size=pt)
+            except tk.TclError:
+                pass
+        f = tkfont.nametofont("TkDefaultFont")
+        fam = f.actual("family")
+        style = ttk.Style()
+        style.configure("TLabel", font=(fam, pt))
+        style.configure("TButton", font=(fam, pt))
+        style.configure("TLabelframe.Label", font=(fam, pt))
+
+    def _models_banner_text(self) -> str:
+        return (
+            f"Depth model: Depth-Anything ({self.model})\n"
+            f"Seg model: SegFormer ({_SEG_HF_ID}), weights: {self._seg_weights.name}"
+        )
+
+    def _stats_placeholder_text(self) -> str:
+        n = len(self.paths)
+        if n == 0:
+            return "No frames loaded."
+        return "Starting..."
+
+    def _stats_running_text(self, idx: int) -> str:
+        n = len(self.paths)
+        return f"Frame {idx + 1}/{n} (running...)"
+
+    def _print_timing_summary(self) -> None:
+        n = self._acc_timed_frames
+        print("", flush=True)
+        if n <= 0:
+            print("=== Inference timing summary: no frames completed ===", flush=True)
+            return
+        s_seg = self._acc_seg_s
+        s_dep = self._acc_depth_s
+        s_tot = s_seg + s_dep
+        eps = 1e-12
+        print(f"=== Inference timing summary ({n} frames) ===", flush=True)
+        print(
+            f"  Seg:   {s_seg:.3f} s total   {s_seg / n * 1000:.1f} ms/frame avg   "
+            f"{n / max(s_seg, eps):.2f} FPS",
+            flush=True,
+        )
+        print(
+            f"  Depth: {s_dep:.3f} s total   {s_dep / n * 1000:.1f} ms/frame avg   "
+            f"{n / max(s_dep, eps):.2f} FPS",
+            flush=True,
+        )
+        print(
+            f"  Serial (seg then depth, end-to-end): {s_tot:.3f} s total   "
+            f"{s_tot / n * 1000:.1f} ms/frame avg   {n / max(s_tot, eps):.2f} FPS",
+            flush=True,
+        )
 
     def _set_fullscreen(self, on: bool) -> None:
         self._fullscreen = on
@@ -306,19 +392,6 @@ class CombinedSequenceViewer:
     def _toggle_fullscreen(self) -> None:
         self._set_fullscreen(not self._fullscreen)
 
-    def _status_text(self) -> str:
-        n = len(self.paths)
-        if n == 0:
-            return f"{self.seq_dir.resolve()}\n(no images for prefixes {FILENAME_PREFIXES})"
-        ims = self.infer_max_side
-        infer_note = "full res" if ims <= 0 else f"long edge ≤ {ims}px"
-        seg_name = self._seg_weights.name
-        return (
-            f"{self.seq_dir.resolve()}\n"
-            f"{n} frames · depth={self.model} · seg={seg_name} · {infer_note} · "
-            f"preview ≤ {self._gui_preview_max}px"
-        )
-
     def _start_worker(self) -> None:
         t = threading.Thread(target=self._worker, daemon=True)
         t.start()
@@ -343,20 +416,24 @@ class CombinedSequenceViewer:
                     if self._seg_device
                     else torch.device("cuda" if torch.cuda.is_available() else "cpu")
                 )
+                t0 = time.perf_counter()
                 mask = compute_segmentation_mask(rgb_small, self._seg_weights, seg_dev)
+                seg_s = time.perf_counter() - t0
                 seg_rgb = _seg_mask_to_rgb_u8(mask)
 
                 with self._pipe_lock:
                     if self._pipe is None:
                         self._pipe, _ = _load_depth_pipe(_DEPTH_PKG, self.model)
+                    t1 = time.perf_counter()
                     depth, _infer_s = _compute_depth_map(rgb_small, self._pipe)
+                    depth_s = time.perf_counter() - t1
                     depth = np.asarray(depth, dtype=np.float32)
                     if self.est_scale != 1.0:
                         depth = depth * float(self.est_scale)
 
                 rgb = rgb_small
                 dep_rgb = _depth_to_rgb_u8(depth)
-                self._result_q.put(("ok", rid, idx, rgb, seg_rgb, dep_rgb, str(path)))
+                self._result_q.put(("ok", rid, idx, rgb, seg_rgb, dep_rgb, seg_s, depth_s))
             except Exception as e:
                 self._result_q.put(("err", rid, idx, str(e)))
 
@@ -367,7 +444,7 @@ class CombinedSequenceViewer:
         self._index = idx
         self._req_id += 1
         self._latest_req = self._req_id
-        self._lbl_busy.config(text=f"Inferring… {idx + 1}/{len(self.paths)}")
+        self._lbl_stats.config(text=self._stats_running_text(idx))
         self._work_q.put(("infer", idx, self._req_id))
 
     def _poll_results(self) -> None:
@@ -377,7 +454,7 @@ class CombinedSequenceViewer:
                 if item is None:
                     continue
                 if item[0] == "ok":
-                    _, rid, idx, rgb, seg_rgb, dep_rgb, path_str = item
+                    _, rid, idx, rgb, seg_rgb, dep_rgb, seg_s, depth_s = item
                     if rid != self._latest_req:
                         continue
                     self._photo_rgb = _array_to_photo(rgb, self._gui_preview_max)
@@ -386,9 +463,12 @@ class CombinedSequenceViewer:
                     self._lbl_rgb.configure(image=self._photo_rgb)
                     self._lbl_seg.configure(image=self._photo_seg)
                     self._lbl_depth.configure(image=self._photo_depth)
-                    self._lbl_busy.config(
-                        text=f"{idx + 1}/{len(self.paths)} — {Path(path_str).name}"
+                    self._lbl_stats.config(
+                        text=_format_current_frame_stats(idx, len(self.paths), seg_s, depth_s)
                     )
+                    self._acc_seg_s += float(seg_s)
+                    self._acc_depth_s += float(depth_s)
+                    self._acc_timed_frames += 1
 
                     skip = self._skip_auto_advance_once
                     if skip:
@@ -407,7 +487,7 @@ class CombinedSequenceViewer:
                         continue
                     self._playing = False
                     self._btn_play.config(text="Play")
-                    self._lbl_busy.config(text=f"Error: {err}")
+                    self._lbl_stats.config(text=f"Error on frame {idx + 1}/{len(self.paths)}\n{err}")
                     messagebox.showerror("Inference failed", str(err))
         except queue.Empty:
             pass
@@ -456,6 +536,7 @@ class CombinedSequenceViewer:
         self._closing = True
         self._worker_stop.set()
         self._work_q.put(("stop", None, -1))
+        self._print_timing_summary()
         try:
             self.root.destroy()
         except tk.TclError:

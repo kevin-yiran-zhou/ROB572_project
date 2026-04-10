@@ -6,140 +6,37 @@ Expected radar CSV columns (at minimum):
 - v: y pixel coordinate in the image
 - range: radar range value (used for point color)
 
-This script is written for the WaterScenes_Samples folder layout in this repo.
+Expects ``WaterScenes_Samples/`` at the **project root** (parent of the ``depth/`` package).
+Weights stay under ``depth/model/<size>/``.
 """
 
 from __future__ import annotations
 
 import argparse
+import random
+import sys
 from pathlib import Path
 
-import matplotlib.image as mpimg
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
-import os
 import pandas as pd
-import matplotlib as mpl
-from PIL import Image
-from transformers import pipeline
-import random
-from typing import Tuple
-import time
 
+# ``depth`` must not import ``test``; ``test`` may import ``depth`` / ``depth._pipeline``.
+_PKG_DIR = Path(__file__).resolve().parent
+_PROJECT_ROOT = _PKG_DIR.parent
+_REPO_ROOT = _PROJECT_ROOT
+if __package__ is None:
+    sys.path.insert(0, str(_REPO_ROOT))
 
-def _load_radar_uvr(radar_csv_path: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    radar = pd.read_csv(str(radar_csv_path))
-    required_cols = {"u", "v", "range"}
-    missing = required_cols - set(radar.columns)
-    if missing:
-        raise ValueError(
-            f"Radar CSV missing required columns {sorted(missing)}. "
-            f"Got columns: {list(radar.columns)}"
-        )
-    return radar["u"].to_numpy(), radar["v"].to_numpy(), radar["range"].to_numpy()
-
-
-def _sample_est_depth_at_uv(depth_map: np.ndarray, u: np.ndarray, v: np.ndarray) -> np.ndarray:
-    h, w = depth_map.shape[:2]
-    u_int = np.clip(np.round(u).astype(int), 0, w - 1)
-    v_int = np.clip(np.round(v).astype(int), 0, h - 1)
-    return depth_map[v_int, u_int].astype(float)
-
-
-def _load_depth_pipe(repo_root: Path, model_variant: str):
-    model_dir = repo_root / "model" / model_variant
-    model_name = str(model_dir)
-
-    try:
-        import torch
-
-        device = 0 if torch.cuda.is_available() else -1
-    except ModuleNotFoundError:
-        raise ModuleNotFoundError(
-            "Missing dependency: `torch`. Install it in your conda env, e.g.\n"
-            "  pip install torch\n"
-            "Then re-run this script."
-        )
-
-    weight_candidates = (
-        list(model_dir.glob("*.safetensors"))
-        + list(model_dir.glob("*.bin"))
-        + list(model_dir.glob("*.pt"))
-        + list(model_dir.glob("*.pth"))
-        + list(model_dir.glob("*.ckpt"))
-    )
-    has_sharded_index = (model_dir / "model.safetensors.index.json").is_file()
-    if not weight_candidates and not has_sharded_index:
-        raise FileNotFoundError(
-            f"Depth-Anything weights not found in `./model/{model_variant}/`.\n"
-            "Put the checkpoint files there (e.g. `*.safetensors` or `*.bin`).\n"
-            f"Currently found: {[p.name for p in model_dir.iterdir()]}"
-        )
-
-    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
-    os.environ.setdefault("HF_HUB_OFFLINE", "1")
-    return pipeline(task="depth-estimation", model=model_name, device=device)
-
-
-def _compute_depth_map(img_to_show: np.ndarray, depth_pipe) -> tuple[np.ndarray, float]:
-    import torch
-
-    pil_image = Image.fromarray(
-        (img_to_show * 255).astype("uint8")
-    ) if img_to_show.dtype != np.uint8 else Image.fromarray(img_to_show)
-
-    t0 = time.perf_counter()
-    depth_result = depth_pipe(pil_image)
-    process_time_s = time.perf_counter() - t0
-    if isinstance(depth_result, list):
-        depth_result = depth_result[0]
-
-    img_h, img_w = img_to_show.shape[0], img_to_show.shape[1]
-
-    if "predicted_depth" in depth_result:
-        raw = depth_result["predicted_depth"]
-        if not isinstance(raw, torch.Tensor):
-            raise RuntimeError(
-                f"Expected `predicted_depth` to be a torch.Tensor, got {type(raw)}"
-            )
-        raw_2d = raw[0] if raw.ndim == 3 else raw
-        if raw_2d.ndim != 2:
-            raise RuntimeError(f"Unexpected predicted_depth shape: {tuple(raw.shape)}")
-
-        depth_resized = torch.nn.functional.interpolate(
-            raw_2d[None, None, ...],
-            size=(img_h, img_w),
-            mode="bicubic",
-            align_corners=False,
-        )[0, 0]
-        depth_map = depth_resized.detach().float().cpu().numpy()
-    elif "depth" in depth_result:
-        depth = depth_result["depth"]
-        if isinstance(depth, torch.Tensor):
-            depth_map = depth.detach().float().cpu().numpy()
-        elif isinstance(depth, np.ndarray):
-            depth_map = depth.astype(np.float32)
-        else:
-            depth_map = np.array(depth, dtype=np.float32)
-
-        if depth_map.ndim == 2 and depth_map.shape != (img_h, img_w):
-            depth_t = torch.from_numpy(depth_map)[None, None, ...].float()
-            depth_map = (
-                torch.nn.functional.interpolate(
-                    depth_t,
-                    size=(img_h, img_w),
-                    mode="bicubic",
-                    align_corners=False,
-                )[0, 0]
-                .cpu()
-                .numpy()
-            )
-    else:
-        raise RuntimeError(
-            f"Unexpected depth pipeline output keys: {list(depth_result.keys())}"
-        )
-
-    return np.squeeze(depth_map), process_time_s
+from depth._constants import DEFAULT_EST_SCALE
+from depth._pipeline import (
+    _compute_depth_map,
+    _load_depth_pipe,
+    _load_radar_uvr,
+    _sample_est_depth_at_uv,
+    load_image_for_depth,
+)
 
 
 def visualize_image_with_radar(
@@ -152,7 +49,7 @@ def visualize_image_with_radar(
     cmap: str = "inferno",
     show_colorbar: bool = True,
     within: float | None = None,
-    est_scale: float = 1.0,
+    est_scale: float = DEFAULT_EST_SCALE,
     model_variant: str = "base",
 ) -> Path | None:
     image_path = Path(image_path)
@@ -164,17 +61,12 @@ def visualize_image_with_radar(
     if not radar_csv_path.is_file():
         raise FileNotFoundError(f"Radar CSV not found: {radar_csv_path}")
 
-    img = mpimg.imread(str(image_path))
-    if img.ndim == 2:
-        # Grayscale -> make it RGB-like for imshow consistency.
-        img_to_show = img
-    else:
-        img_to_show = img
+    img_to_show = load_image_for_depth(image_path)
 
     u, v, r = _load_radar_uvr(radar_csv_path)
 
     repo_root = Path(__file__).resolve().parent
-    depth_pipe = _load_depth_pipe(repo_root, model_variant=model_variant)
+    depth_pipe, _ = _load_depth_pipe(repo_root, model_variant=model_variant)
     depth_map, process_time_s = _compute_depth_map(img_to_show, depth_pipe)
 
     # Basic stats of metric depth
@@ -306,7 +198,7 @@ def _run_all(
     model_variant: str,
 ) -> None:
     repo_root = Path(__file__).resolve().parent
-    depth_pipe = _load_depth_pipe(repo_root, model_variant=model_variant)
+    depth_pipe, _ = _load_depth_pipe(repo_root, model_variant=model_variant)
 
     images = sorted(image_dir.glob("*.jpg"))
     if not images:
@@ -328,8 +220,7 @@ def _run_all(
             skipped += 1
             continue
 
-        img = mpimg.imread(str(img_path))
-        img_to_show = img
+        img_to_show = load_image_for_depth(img_path)
 
         try:
             u, v, r = _load_radar_uvr(radar_csv)
@@ -405,8 +296,7 @@ def _run_all(
 
 
 def main() -> None:
-    repo_root = Path(__file__).resolve().parent
-    data_root = repo_root / "WaterScenes_Samples"
+    data_root = _PROJECT_ROOT / "WaterScenes_Samples"
     image_dir = data_root / "image"
     radar_dir = data_root / "radar"
 
@@ -423,13 +313,16 @@ def main() -> None:
         type=str,
         choices=["small", "base", "large"],
         default="base",
-        help="Depth-Anything model size to load from model/<size>/.",
+        help="Depth-Anything model size to load from depth/model/<size>/.",
     )
     parser.add_argument(
         "--est_scale",
         type=float,
-        default=1.0,
-        help="Multiply ALL estimated depths by this scalar before saving (default: 1.0).",
+        default=DEFAULT_EST_SCALE,
+        help=(
+            "Multiply ALL estimated depths by this scalar before saving "
+            f"(default: {DEFAULT_EST_SCALE}, see depth._constants.DEFAULT_EST_SCALE)."
+        ),
     )
     args = parser.parse_args()
 

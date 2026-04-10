@@ -1,10 +1,8 @@
 """
-GUI: Depth-Anything on the davimar_seq_02* image sequence.
+Tkinter GUI: RGB + SegFormer segmentation + Depth-Anything on a prefixed sequence (``--seq-dir``).
 
-Model is selectable via ``--model`` (default: small). Default ``--infer-max-side`` caps the longest image edge (552 px, aspect preserved) before depth. Starts fullscreen (or
-maximized); Esc exits fullscreen. Auto-plays once through the sequence then closes the window.
-The on-screen **Infer FPS** uses only ``depth_pipe(...)`` time from ``depth._pipeline`` (not GUI
-resize/colormap). Display work can still limit how fast frames appear end-to-end.
+Depth checkpoint via ``--model``; ``--infer-max-side`` downsamples once for both seg and depth.
+Starts fullscreen; Esc toggles fullscreen. Auto-plays through the sequence once then closes.
 """
 
 from __future__ import annotations
@@ -23,35 +21,33 @@ if str(_ROOT) not in sys.path:
 
 from depth._constants import DEFAULT_EST_SCALE
 from depth._pipeline import _compute_depth_map, _load_depth_pipe, load_image_for_depth
+from segmentation._pipeline import compute_segmentation_mask
 
-try:
-    import tkinter as tk
-    from tkinter import messagebox, ttk
-except ImportError as e:
-    raise SystemExit("tkinter is required (usually bundled with Python).") from e
+import tkinter as tk
+from tkinter import messagebox, ttk
+from PIL import Image, ImageTk
+import matplotlib.cm as mpl_cm
 
-try:
-    from PIL import Image, ImageTk
-except ImportError as e:
-    raise SystemExit("Install Pillow: pip install pillow") from e
-
-try:
-    import matplotlib.cm as mpl_cm
-except ImportError as e:
-    raise SystemExit("Install matplotlib: pip install matplotlib") from e
-
-# One-time inferno table: per-pixel mpl_cm.inferno() was a major CPU bottleneck each frame.
+# LUT for depth colormap (faster than calling inferno per pixel each frame).
 _INFERNO_LUT = (mpl_cm.inferno(np.linspace(0.0, 1.0, 256, dtype=np.float64))[:, :3] * 255.0).astype(
     np.uint8
 )
 
 _SEQ_SUBDIR = Path("lars_v1.0.0_images_seq/test/images_seq")
-_PREFIX = "davimar_seq_28"
-_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
-_PKG_DEPTH = _ROOT / "depth"
-_MODEL_CHOICES = ("small", "base", "large")
+_PREFIX = "davimar_seq_30"
+_IMAGE_SUFFIXES = {".jpg"}
+# Depth-Anything
+_DEPTH_PKG = _ROOT / "depth"
+_DEPTH_MODEL_CHOICES = ("small", "base", "large")
 
-# GUI preview: cap longest edge so PIL+PhotoImage don’t dominate frame time; BOX/NEAREST is fast.
+# SegFormer (same class colors as ``segmentation/vis.py``)
+_SEG_PKG = _ROOT / "segmentation"
+_SEG_LUT = np.zeros((256, 3), dtype=np.uint8)
+_SEG_LUT[0] = (255, 0, 0)
+_SEG_LUT[1] = (0, 0, 255)
+_SEG_LUT[2] = (0, 255, 0)
+_SEG_LUT[255] = (0, 0, 0)
+
 _GUI_PREVIEW_SIDE_CAP = 1280
 _rs = getattr(Image, "Resampling", Image)
 _PREVIEW_DOWN_RESAMPLE = getattr(_rs, "BOX", getattr(_rs, "NEAREST", Image.NEAREST))
@@ -79,6 +75,11 @@ def _list_sequence_images(seq_dir: Path) -> list[Path]:
         and p.name.startswith(_PREFIX)
     ]
     return sorted(paths, key=_natural_sort_key)
+
+
+def _seg_mask_to_rgb_u8(mask: np.ndarray) -> np.ndarray:
+    m = np.clip(np.asarray(mask, dtype=np.intp), 0, 255)
+    return _SEG_LUT[m]
 
 
 def _depth_to_rgb_u8(depth: np.ndarray) -> np.ndarray:
@@ -130,7 +131,7 @@ def _array_to_photo(arr: np.ndarray, max_side: int) -> ImageTk.PhotoImage:
     return ImageTk.PhotoImage(pil)
 
 
-class DepthSequenceViewer:
+class CombinedSequenceViewer:
     def __init__(
         self,
         seq_dir: Path,
@@ -139,9 +140,11 @@ class DepthSequenceViewer:
         est_scale: float = DEFAULT_EST_SCALE,
         infer_max_side: int = 552,
         gui_preview_max: int = _GUI_PREVIEW_SIDE_CAP,
+        seg_weights: Path,
+        seg_device: str | None = None,
     ) -> None:
-        if model not in _MODEL_CHOICES:
-            raise ValueError(f"model must be one of {_MODEL_CHOICES}, got {model!r}")
+        if model not in _DEPTH_MODEL_CHOICES:
+            raise ValueError(f"model must be one of {_DEPTH_MODEL_CHOICES}, got {model!r}")
         if infer_max_side < 0:
             raise ValueError(f"infer_max_side must be >= 0 (0 = no limit), got {infer_max_side}")
         if 0 < infer_max_side < 128:
@@ -153,6 +156,8 @@ class DepthSequenceViewer:
         self.model = model
         self.est_scale = est_scale
         self.infer_max_side = infer_max_side
+        self._seg_weights = Path(seg_weights).resolve()
+        self._seg_device = seg_device
         self._index = 0
         self._pipe = None
         self._pipe_lock = threading.Lock()
@@ -161,21 +166,19 @@ class DepthSequenceViewer:
         self._worker_stop = threading.Event()
         self._req_id = 0
         self._latest_req = 0
-        self._photo_left: ImageTk.PhotoImage | None = None
-        self._photo_right: ImageTk.PhotoImage | None = None
+        self._photo_rgb: ImageTk.PhotoImage | None = None
+        self._photo_seg: ImageTk.PhotoImage | None = None
+        self._photo_depth: ImageTk.PhotoImage | None = None
         self._user_preview_cap = gui_preview_max
         self._gui_preview_max = gui_preview_max
-        self._infer_device_label: str | None = None
-        self._device_line_applied = False
         self._playing = True
         self._skip_auto_advance_once = False
-        self._infer_fps_ema = 0.0
         self._fullscreen = True
         self._closing = False
 
         self.root = tk.Tk()
-        self.root.title(f"Depth-Anything ({model}) — davimar_seq_02")
-        self.root.minsize(900, 480)
+        self.root.title(f"RGB · Seg · Depth ({model}) — {_PREFIX}*")
+        self.root.minsize(1200, 480)
 
         main = ttk.Frame(self.root, padding=8)
         main.pack(fill=tk.BOTH, expand=True)
@@ -192,22 +195,22 @@ class DepthSequenceViewer:
         panes = ttk.PanedWindow(main, orient=tk.HORIZONTAL)
         panes.pack(fill=tk.BOTH, expand=True)
 
-        left_f = ttk.LabelFrame(panes, text="RGB", padding=4)
-        right_f = ttk.LabelFrame(panes, text=f"Depth ({model}, inferno)", padding=4)
-        panes.add(left_f, weight=1)
-        panes.add(right_f, weight=1)
+        rgb_f = ttk.LabelFrame(panes, text="RGB", padding=4)
+        seg_f = ttk.LabelFrame(panes, text="Segmentation (SegFormer)", padding=4)
+        dep_f = ttk.LabelFrame(panes, text=f"Depth ({model}, inferno)", padding=4)
+        panes.add(rgb_f, weight=1)
+        panes.add(seg_f, weight=1)
+        panes.add(dep_f, weight=1)
 
-        self._lbl_left = ttk.Label(left_f)
-        self._lbl_left.pack(expand=True)
-        self._lbl_right = ttk.Label(right_f)
-        self._lbl_right.pack(expand=True)
+        self._lbl_rgb = ttk.Label(rgb_f)
+        self._lbl_rgb.pack(expand=True)
+        self._lbl_seg = ttk.Label(seg_f)
+        self._lbl_seg.pack(expand=True)
+        self._lbl_depth = ttk.Label(dep_f)
+        self._lbl_depth.pack(expand=True)
 
-        status_row = ttk.Frame(main)
-        status_row.pack(fill=tk.X, pady=4)
-        self._lbl_busy = ttk.Label(status_row, text="")
-        self._lbl_busy.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self._lbl_fps = ttk.Label(status_row, text="Infer FPS: —", width=18)
-        self._lbl_fps.pack(side=tk.RIGHT, padx=(8, 0))
+        self._lbl_busy = ttk.Label(main, text="")
+        self._lbl_busy.pack(fill=tk.X, pady=4)
 
         nav = ttk.Frame(main)
         nav.pack(fill=tk.X, pady=6)
@@ -245,8 +248,7 @@ class DepthSequenceViewer:
         want = int(min(max(sw // 2 - 96, sh - 240, 960), 4096))
         self._gui_preview_max = min(want, self._user_preview_cap)
         self._info_wrap = max(sw - 80, 600)
-        if hasattr(self, "_info"):
-            self._info.configure(wraplength=self._info_wrap)
+        self._info.configure(wraplength=self._info_wrap)
         self._set_fullscreen(True)
 
     def _set_fullscreen(self, on: bool) -> None:
@@ -276,23 +278,15 @@ class DepthSequenceViewer:
     def _status_text(self) -> str:
         n = len(self.paths)
         if n == 0:
-            return f"Folder: {self.seq_dir.resolve()}\n(no matching images)"
+            return f"{self.seq_dir.resolve()}\n(no {_PREFIX}* images)"
         ims = self.infer_max_side
-        infer_note = (
-            "model input: full resolution (no resize)"
-            if ims <= 0
-            else f"model input: long edge ≤ {ims}px (aspect preserved)"
+        infer_note = "full res" if ims <= 0 else f"long edge ≤ {ims}px"
+        seg_name = self._seg_weights.name
+        return (
+            f"{self.seq_dir.resolve()}\n"
+            f"{n} frames · depth={self.model} · seg={seg_name} · {infer_note} · "
+            f"preview ≤ {self._gui_preview_max}px"
         )
-        lines = [
-            f"Folder: {self.seq_dir.resolve()}",
-            (
-                f"{n} frames ({_PREFIX}*), model={self.model!r}, est_scale={self.est_scale}, "
-                f"{infer_note}, GUI preview max side {self._gui_preview_max}px"
-            ),
-        ]
-        if self._infer_device_label:
-            lines.append(self._infer_device_label)
-        return "\n".join(lines)
 
     def _start_worker(self) -> None:
         t = threading.Thread(target=self._worker, daemon=True)
@@ -309,19 +303,29 @@ class DepthSequenceViewer:
             if msg != "infer" or idx is None:
                 continue
             try:
+                import torch
+
                 path = self.paths[idx]
                 rgb_small = _resize_rgb_max_long_side(_load_rgb_u8(path), self.infer_max_side)
+                seg_dev = (
+                    torch.device(self._seg_device)
+                    if self._seg_device
+                    else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                )
+                mask = compute_segmentation_mask(rgb_small, self._seg_weights, seg_dev)
+                seg_rgb = _seg_mask_to_rgb_u8(mask)
+
                 with self._pipe_lock:
                     if self._pipe is None:
-                        self._pipe, self._infer_device_label = _load_depth_pipe(_PKG_DEPTH, self.model)
-                    depth, infer_s = _compute_depth_map(rgb_small, self._pipe)
+                        self._pipe, _ = _load_depth_pipe(_DEPTH_PKG, self.model)
+                    depth, _infer_s = _compute_depth_map(rgb_small, self._pipe)
                     depth = np.asarray(depth, dtype=np.float32)
                     if self.est_scale != 1.0:
                         depth = depth * float(self.est_scale)
 
                 rgb = rgb_small
                 dep_rgb = _depth_to_rgb_u8(depth)
-                self._result_q.put(("ok", rid, idx, rgb, dep_rgb, str(path), float(infer_s)))
+                self._result_q.put(("ok", rid, idx, rgb, seg_rgb, dep_rgb, str(path)))
             except Exception as e:
                 self._result_q.put(("err", rid, idx, str(e)))
 
@@ -332,7 +336,7 @@ class DepthSequenceViewer:
         self._index = idx
         self._req_id += 1
         self._latest_req = self._req_id
-        self._lbl_busy.config(text=f"Running depth… {idx + 1}/{len(self.paths)}")
+        self._lbl_busy.config(text=f"Inferring… {idx + 1}/{len(self.paths)}")
         self._work_q.put(("infer", idx, self._req_id))
 
     def _poll_results(self) -> None:
@@ -342,25 +346,18 @@ class DepthSequenceViewer:
                 if item is None:
                     continue
                 if item[0] == "ok":
-                    _, rid, idx, rgb, dep_rgb, path_str, infer_s = item
+                    _, rid, idx, rgb, seg_rgb, dep_rgb, path_str = item
                     if rid != self._latest_req:
                         continue
-                    self._photo_left = _array_to_photo(rgb, self._gui_preview_max)
-                    self._photo_right = _array_to_photo(dep_rgb, self._gui_preview_max)
-                    self._lbl_left.configure(image=self._photo_left)
-                    self._lbl_right.configure(image=self._photo_right)
+                    self._photo_rgb = _array_to_photo(rgb, self._gui_preview_max)
+                    self._photo_seg = _array_to_photo(seg_rgb, self._gui_preview_max)
+                    self._photo_depth = _array_to_photo(dep_rgb, self._gui_preview_max)
+                    self._lbl_rgb.configure(image=self._photo_rgb)
+                    self._lbl_seg.configure(image=self._photo_seg)
+                    self._lbl_depth.configure(image=self._photo_depth)
                     self._lbl_busy.config(
                         text=f"{idx + 1}/{len(self.paths)} — {Path(path_str).name}"
                     )
-                    if not self._device_line_applied and self._infer_device_label:
-                        self._device_line_applied = True
-                        self._info.config(text=self._status_text())
-                    t_inf = max(float(infer_s), 1e-9)
-                    inst = 1.0 / t_inf
-                    self._infer_fps_ema = (
-                        inst if self._infer_fps_ema <= 0 else 0.85 * self._infer_fps_ema + 0.15 * inst
-                    )
-                    self._lbl_fps.config(text=f"Infer FPS: {self._infer_fps_ema:.2f}")
 
                     skip = self._skip_auto_advance_once
                     if skip:
@@ -369,8 +366,7 @@ class DepthSequenceViewer:
                         n = len(self.paths)
                         if idx >= n - 1:
                             self._playing = False
-                            if hasattr(self, "_btn_play"):
-                                self._btn_play.config(text="Play")
+                            self._btn_play.config(text="Play")
                             self.root.after(200, self._on_close)
                         else:
                             self._enqueue_infer(idx + 1)
@@ -381,7 +377,7 @@ class DepthSequenceViewer:
                     self._playing = False
                     self._btn_play.config(text="Play")
                     self._lbl_busy.config(text=f"Error: {err}")
-                    messagebox.showerror("Depth failed", str(err))
+                    messagebox.showerror("Inference failed", str(err))
         except queue.Empty:
             pass
         if not self._closing:
@@ -441,11 +437,11 @@ class DepthSequenceViewer:
 def main() -> None:
     import argparse
 
-    p = argparse.ArgumentParser(description="Depth-Anything GUI on davimar_seq_02* frames.")
+    p = argparse.ArgumentParser(description="RGB + segmentation + depth GUI on a prefixed image sequence.")
     p.add_argument(
         "--model",
         type=str,
-        choices=list(_MODEL_CHOICES),
+        choices=list(_DEPTH_MODEL_CHOICES),
         default="small",
         help="Checkpoint under depth/model/<model>/ (default: small).",
     )
@@ -455,10 +451,22 @@ def main() -> None:
         default=552,
         metavar="N",
         help=(
-            "Before depth: if N>0, resize so the longest side is at most N pixels (aspect ratio kept). "
-            "Uses fast BOX downscaling. N=0 means no resize (full camera resolution). "
-            "Default: %(default)s."
+            "Before seg + depth: if N>0, resize so the longest side is at most N pixels. "
+            "N=0 means full resolution. Default: %(default)s."
         ),
+    )
+    p.add_argument(
+        "--seg-weights",
+        type=Path,
+        default=None,
+        help=f"SegFormer .pth (default: <repo>/{(_SEG_PKG / 'model' / 'segformer_baseline.pth').as_posix()})",
+    )
+    p.add_argument(
+        "--seg-device",
+        type=str,
+        default=None,
+        metavar="DEV",
+        help='Torch device for segmentation (e.g. "cpu", "cuda:0"). Default: auto.',
     )
     p.add_argument(
         "--preview-max",
@@ -466,8 +474,8 @@ def main() -> None:
         default=_GUI_PREVIEW_SIDE_CAP,
         metavar="PX",
         help=(
-            "Max longest edge (pixels) for RGB/depth thumbnails in the GUI only. "
-            "Separate from --infer-max-side. Default: %(default)s."
+            "Max longest edge (pixels) for panel thumbnails in the GUI only. "
+            "Default: %(default)s."
         ),
     )
     p.add_argument(
@@ -484,11 +492,16 @@ def main() -> None:
     if args.preview_max < 320:
         p.error("--preview-max must be >= 320")
     seq_dir = (args.seq_dir or (_ROOT / _SEQ_SUBDIR)).resolve()
-    app = DepthSequenceViewer(
+    seg_w = (args.seg_weights or (_SEG_PKG / "model" / "segformer_baseline.pth")).resolve()
+    if not seg_w.is_file():
+        p.error(f"--seg-weights not found: {seg_w}")
+    app = CombinedSequenceViewer(
         seq_dir,
         model=args.model,
         infer_max_side=args.infer_max_side,
         gui_preview_max=args.preview_max,
+        seg_weights=seg_w,
+        seg_device=args.seg_device,
     )
     app.run()
 

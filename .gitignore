@@ -3,6 +3,7 @@
 /lars_v1.0.0_images_seq
 /lars_v1.0.0_images
 /lars_v1.0.0_annotations
+/MODD2_video_data_rectified
 
 # Model weights
 segmentation/model/*.pth

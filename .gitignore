@@ -10,6 +10,9 @@ depth/model/base/
 depth/model/large/
 depth/model/small/
 
+# report
+/ROB572_FinalReport_tayanwu_yrzhou_zzww
+
 # Eval outputs
 /eval_results*/
 

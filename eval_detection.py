@@ -104,6 +104,8 @@ W_BOAT = 2.0
 LAT_MARGIN = 1.0
 D_SAFE = 12.0
 L_SAFE = 2.0
+V_REF = 3.0
+ALPHA_V = 1.0
 
 TRACK_MAX_AGE = 5
 TRACK_MIN_HITS = 2
@@ -437,6 +439,7 @@ def run_eval(args: argparse.Namespace) -> None:
             obstacles,
             hfov_deg=HFOV_DEG, w_boat=W_BOAT, lat_margin=LAT_MARGIN,
             d_safe=D_SAFE, l_safe=L_SAFE,
+            v_ref=V_REF, alpha_v=ALPHA_V, tracked=tracked,
         )
         risk_ms = (time.perf_counter() - t0) * 1000
 
@@ -706,6 +709,7 @@ def run_eval_v2(args: argparse.Namespace) -> None:
             obstacles,
             hfov_deg=HFOV_DEG, w_boat=W_BOAT, lat_margin=LAT_MARGIN,
             d_safe=D_SAFE, l_safe=L_SAFE,
+            v_ref=V_REF, alpha_v=ALPHA_V, tracked=tracked,
         )
         risk_ms = (time.perf_counter() - t0) * 1000
         total_ms = (time.perf_counter() - t_total_0) * 1000

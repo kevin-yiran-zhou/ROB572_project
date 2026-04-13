@@ -9,20 +9,16 @@ the ship-domain sizing intuition of Fujii & Tanaka (1971):
 
     d_lat   = lateral_offset · d_forward · tan(HFOV / 2)
     lat_exc = max(0, |d_lat| - (W_BOAT / 2 + LAT_MARGIN))
-    R       = w_class · exp(-d_forward / D_SAFE) · exp(-lat_exc / L_SAFE)
+    R_base  = w_class · exp(-d_forward / D_SAFE) · exp(-lat_exc / L_SAFE)
+    R       = R_base  · (1 + ALPHA_V · max(0, v_closing) / V_REF)
 
 - W_BOAT / LAT_MARGIN define a forward collision corridor whose half-width
   comes from a virtual ASV hull plus a safety buffer (ship-domain flavour).
-- D_SAFE controls how fast risk decays with forward distance. It is kept
-  inside the 20 m reliable-depth range reported in the progress report.
+- D_SAFE controls how fast risk decays with forward distance.
 - L_SAFE controls how fast risk decays once an obstacle leaves the corridor.
-- An obstacle directly ahead at d_forward = 0 gives R = w_class (≈ 1.0);
-  an obstacle at the edge of the corridor decays like exp(-d_forward/D_SAFE);
-  an obstacle far to the side decays additionally by exp(-lat_exc/L_SAFE).
-
-Phase 2 (after SORT tracking is wired up) will replace the proximity term
-with exp(-TTC / T_SAFE) where TTC = d_forward / v_closing, keeping the
-corridor geometry intact.
+- ALPHA_V / V_REF control how much closing velocity amplifies risk.
+  When v_closing <= 0 (stationary/receding), the velocity factor is 1.0
+  and the formula degrades to the static baseline.
 
 Warning levels
 --------------
@@ -36,7 +32,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 from fusion.obstacle import Obstacle
 
@@ -51,7 +47,11 @@ LAT_MARGIN: float = 1.5
 D_SAFE: float = 12.0   # forward; chosen within the 0–20 m reliable depth band
 L_SAFE: float = 4.0    # lateral (only kicks in outside the corridor)
 
-# Warning thresholds on R ∈ [0, class_weight].
+# Velocity risk amplification.
+V_REF: float = 3.0     # reference closing speed (m/s); typical inland vessel speed
+ALPHA_V: float = 1.0   # max amplification factor (1.0 → risk can double at V_REF)
+
+# Warning thresholds on R ∈ [0, class_weight * (1+ALPHA_V)].
 THRESHOLD_IMMEDIATE: float = 0.50
 THRESHOLD_CAUTION: float = 0.15
 
@@ -110,6 +110,9 @@ def _corridor_score(
     d_safe: float,
     l_safe: float,
     class_weight: float,
+    v_closing: float | None,
+    v_ref: float,
+    alpha_v: float,
 ) -> tuple[float, float]:
     """Return (risk_score, lat_excess_m)."""
     corridor_half = w_boat / 2.0 + lat_margin
@@ -118,7 +121,15 @@ def _corridor_score(
     proximity = math.exp(-max(d_forward, 0.0) / d_safe)
     lateral = math.exp(-lat_excess / l_safe)
 
-    return class_weight * proximity * lateral, lat_excess
+    base = class_weight * proximity * lateral
+
+    # Velocity amplification: approaching objects get higher risk
+    if v_closing is not None and v_closing > 0.0:
+        vel_factor = 1.0 + alpha_v * min(v_closing / v_ref, 2.0)
+    else:
+        vel_factor = 1.0
+
+    return base * vel_factor, lat_excess
 
 
 def assess_frame(
@@ -129,6 +140,9 @@ def assess_frame(
     lat_margin: float = LAT_MARGIN,
     d_safe: float = D_SAFE,
     l_safe: float = L_SAFE,
+    v_ref: float = V_REF,
+    alpha_v: float = ALPHA_V,
+    tracked: Any = None,
 ) -> FrameRisk:
     """
     Compute per-obstacle risk scores and the global warning level for one frame.
@@ -136,10 +150,11 @@ def assess_frame(
     Parameters
     ----------
     obstacles : list of Obstacle from fusion.obstacle.extract_obstacles().
-    hfov_deg  : camera horizontal field of view in degrees (used to convert
-                lateral_offset to metric lateral distance).
+    hfov_deg  : camera horizontal field of view in degrees.
     w_boat, lat_margin : virtual ASV beam + safety margin, define corridor.
     d_safe, l_safe     : forward / lateral risk decay scales.
+    v_ref, alpha_v     : velocity amplification parameters.
+    tracked   : optional list of TrackedObstacle for velocity lookup.
 
     Returns
     -------
@@ -148,12 +163,19 @@ def assess_frame(
     if not obstacles:
         return FrameRisk(obstacle_risks=[], global_warning=WarningLevel.SAFE)
 
+    # Build velocity lookup: obstacle id → v_closing
+    vel_lookup: dict[int, float | None] = {}
+    if tracked is not None:
+        for t in tracked:
+            vel_lookup[id(t.obstacle)] = t.v_closing
+
     tan_half_fov = math.tan(math.radians(hfov_deg) / 2.0)
     results: list[ObstacleRisk] = []
 
     for obs in obstacles:
         d_fwd = float(obs.effective_depth)
         d_lat = obs.lateral_offset * d_fwd * tan_half_fov
+        v_closing = vel_lookup.get(id(obs), None)
 
         score, lat_excess = _corridor_score(
             d_fwd,
@@ -163,6 +185,9 @@ def assess_frame(
             d_safe=d_safe,
             l_safe=l_safe,
             class_weight=obs.class_weight,
+            v_closing=v_closing,
+            v_ref=v_ref,
+            alpha_v=alpha_v,
         )
         results.append(
             ObstacleRisk(

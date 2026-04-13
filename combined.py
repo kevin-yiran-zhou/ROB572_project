@@ -68,6 +68,8 @@ W_BOAT: float = 2.0          # virtual ASV beam (m)
 LAT_MARGIN: float = 1.0      # lateral safety margin outside beam (m)
 D_SAFE: float = 12.0         # forward risk decay scale (m)
 L_SAFE: float = 2.0          # lateral risk decay scale (m); sharper than corridor
+V_REF: float = 3.0           # reference closing speed (m/s) for velocity amplification
+ALPHA_V: float = 1.0         # velocity amplification factor (risk can double at V_REF)
 DRAW_CORRIDOR: bool = True   # overlay the forward collision corridor
 CORRIDOR_NEAR_M: float = 4.0 # near plane of corridor trapezoid (visual only)
 CORRIDOR_FAR_M: float = 20.0 # far plane of corridor trapezoid (visual only)
@@ -738,6 +740,9 @@ class CombinedSequenceViewer:
                     lat_margin=LAT_MARGIN,
                     d_safe=D_SAFE,
                     l_safe=L_SAFE,
+                    v_ref=V_REF,
+                    alpha_v=ALPHA_V,
+                    tracked=tracked,
                 )
                 most = frame_risk.most_critical
                 cur_score = most.risk_score if most is not None else 0.0

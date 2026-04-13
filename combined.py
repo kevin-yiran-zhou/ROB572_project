@@ -52,7 +52,8 @@ INFER_MAX_SIDE: int = 552  # 0 = no resize before seg/depth; else max long edge 
 GUI_PREVIEW_MAX: int = 1280  # longest edge for on-screen thumbnails
 GUI_FONT_PT: int = 16  # base UI font size (labels, buttons, panel titles)
 
-SEQ_DIR: Path = _ROOT / "MODD2_video_data_rectified/video_data/kope67-00-00025200-00025670/framesRectified"
+# SEQ_DIR: Path = _ROOT / "MODD2_video_data_rectified/video_data/kope67-00-00025200-00025670/framesRectified"
+SEQ_DIR: Path = _ROOT / "MODD2_video_data_rectified/video_data/kope71-01-00011210-00011320/framesRectified"
 IMAGE_GLOB_PATTERN: str = "*L.jpg"
 
 SEG_WEIGHTS: Path = _SEG_PKG / "model" / "segformer_instance_aware_best.pth"

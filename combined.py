@@ -52,11 +52,8 @@ INFER_MAX_SIDE: int = 552  # 0 = no resize before seg/depth; else max long edge 
 GUI_PREVIEW_MAX: int = 1280  # longest edge for on-screen thumbnails
 GUI_FONT_PT: int = 16  # base UI font size (labels, buttons, panel titles)
 
-SEQ_DIR: Path = _ROOT / "lars_v1.0.0_images_seq/test/images_seq"
-# Multiple prefixes: each group is sorted (natural order), then groups are concatenated in list order.
-# FILENAME_PREFIXES: list[str] = ["davimar_seq_14", "davimar_seq_15", "davimar_seq_16", "davimar_seq_17"]
-FILENAME_PREFIXES: list[str] = ["davimar_seq_30", "davimar_seq_31", "davimar_seq_32"]
-IMAGE_SUFFIXES: list[str] = [".jpg"]
+SEQ_DIR: Path = _ROOT / "MODD2_video_data_rectified/video_data/kope67-00-00025200-00025670/framesRectified"
+IMAGE_GLOB_PATTERN: str = "*L.jpg"
 
 SEG_WEIGHTS: Path = _SEG_PKG / "model" / "segformer_instance_aware_best.pth"
 # SEG_WEIGHTS: Path = _SEG_PKG / "model" / "segformer_baseline.pth"  # old 3-class
@@ -147,21 +144,10 @@ def _normalized_suffixes(suffixes: list[str]) -> frozenset[str]:
 def _list_sequence_images(seq_dir: Path) -> list[Path]:
     if not seq_dir.is_dir():
         return []
-    suf = _normalized_suffixes(list(IMAGE_SUFFIXES))
-    seen: set[str] = set()
-    out: list[Path] = []
-    for prefix in FILENAME_PREFIXES:
-        batch = [
-            p
-            for p in seq_dir.iterdir()
-            if p.is_file() and p.suffix.lower() in suf and p.name.startswith(prefix)
-        ]
-        for p in sorted(batch, key=_natural_sort_key):
-            key = str(p.resolve())
-            if key not in seen:
-                seen.add(key)
-                out.append(p)
-    return out
+    return sorted(
+        [p for p in seq_dir.glob(IMAGE_GLOB_PATTERN) if p.is_file()],
+        key=_natural_sort_key,
+    )
 
 
 def _seg_mask_to_rgb_u8(mask: np.ndarray) -> np.ndarray:
@@ -514,8 +500,7 @@ class CombinedSequenceViewer:
         )
 
         self.root = tk.Tk()
-        pref = " + ".join(f"{p}*" for p in FILENAME_PREFIXES)
-        self.root.title(f"RGB | Seg | Depth ({model}) - {pref}")
+        self.root.title(f"RGB | Seg | Depth ({model}) - {IMAGE_GLOB_PATTERN}")
         self.root.minsize(1200, 480)
         self._apply_ui_fonts()
 
@@ -579,7 +564,7 @@ class CombinedSequenceViewer:
         if not self.paths:
             messagebox.showerror(
                 "No images",
-                f"No files for prefixes {FILENAME_PREFIXES!r} under:\n{seq_dir.resolve()}",
+                f"No files matching {IMAGE_GLOB_PATTERN!r} under:\n{seq_dir.resolve()}",
             )
         else:
             self._start_worker()
@@ -875,10 +860,8 @@ def main() -> None:
         raise ValueError(f"INFER_MAX_SIDE must be 0 or >= 128, got {INFER_MAX_SIDE}")
     if GUI_PREVIEW_MAX < 320:
         raise ValueError(f"GUI_PREVIEW_MAX must be >= 320, got {GUI_PREVIEW_MAX}")
-    if not FILENAME_PREFIXES or not all(isinstance(p, str) and p for p in FILENAME_PREFIXES):
-        raise ValueError("FILENAME_PREFIXES must be a non-empty list of non-empty strings")
-    if not IMAGE_SUFFIXES:
-        raise ValueError("IMAGE_SUFFIXES must be a non-empty list")
+    if not isinstance(IMAGE_GLOB_PATTERN, str) or not IMAGE_GLOB_PATTERN:
+        raise ValueError("IMAGE_GLOB_PATTERN must be a non-empty string")
 
     seq_dir = Path(SEQ_DIR).resolve()
     seg_w = Path(SEG_WEIGHTS).resolve()

@@ -23,12 +23,18 @@ if str(_ROOT) not in sys.path:
 
 from depth._constants import DEFAULT_EST_SCALE
 from depth._pipeline import _compute_depth_map, _load_depth_pipe, load_image_for_depth
-from segmentation._pipeline import compute_segmentation_mask
 
+import math
+
+import cv2
 import tkinter as tk
 from tkinter import messagebox, ttk
 from PIL import Image, ImageTk
 import matplotlib.cm as mpl_cm
+
+from fusion import FrameRisk, WarningLevel, assess_frame, extract_obstacles, extract_obstacles_multiclass
+from tracking import ObstacleTracker, TrackedObstacle
+from segmentation._pipeline import compute_segmentation_and_boundary
 
 # Depth-Anything
 _DEPTH_PKG = _ROOT / "depth"
@@ -48,11 +54,38 @@ GUI_FONT_PT: int = 16  # base UI font size (labels, buttons, panel titles)
 
 SEQ_DIR: Path = _ROOT / "lars_v1.0.0_images_seq/test/images_seq"
 # Multiple prefixes: each group is sorted (natural order), then groups are concatenated in list order.
+# FILENAME_PREFIXES: list[str] = ["davimar_seq_14", "davimar_seq_15", "davimar_seq_16", "davimar_seq_17"]
 FILENAME_PREFIXES: list[str] = ["davimar_seq_30", "davimar_seq_31", "davimar_seq_32"]
 IMAGE_SUFFIXES: list[str] = [".jpg"]
 
-SEG_WEIGHTS: Path = _SEG_PKG / "model" / "segformer_baseline.pth"
+SEG_WEIGHTS: Path = _SEG_PKG / "model" / "segformer_instance_aware_best.pth"
+# SEG_WEIGHTS: Path = _SEG_PKG / "model" / "segformer_baseline.pth"  # old 3-class
 SEG_DEVICE: str | None = None  # None = auto; or "cpu", "cuda:0", ...
+
+# --- Risk-aware warning (fusion module) ---
+HFOV_DEG: float = 70.0       # camera horizontal FOV (LaRS nominal)
+W_BOAT: float = 2.0          # virtual ASV beam (m)
+LAT_MARGIN: float = 1.0      # lateral safety margin outside beam (m)
+D_SAFE: float = 12.0         # forward risk decay scale (m)
+L_SAFE: float = 2.0          # lateral risk decay scale (m); sharper than corridor
+DRAW_CORRIDOR: bool = True   # overlay the forward collision corridor
+CORRIDOR_NEAR_M: float = 4.0 # near plane of corridor trapezoid (visual only)
+CORRIDOR_FAR_M: float = 20.0 # far plane of corridor trapezoid (visual only)
+
+# Frame-level warning hysteresis. Enter a higher level when score crosses the
+# upper threshold; only drop back once it falls below the (lower) exit
+# threshold. Reduces flicker between SAFE/CAUTION/IMMEDIATE on noisy depth.
+# Proper fix is per-track smoothing after SORT lands — this is a stopgap.
+ENTER_CAUTION: float = 0.15
+EXIT_CAUTION: float = 0.10
+ENTER_IMMEDIATE: float = 0.50
+EXIT_IMMEDIATE: float = 0.38
+
+# --- SORT tracking ---
+TRACK_MAX_AGE: int = 5       # frames before a lost track is deleted
+TRACK_MIN_HITS: int = 2      # consecutive hits before track is reported
+TRACK_IOU_THRESH: float = 0.20
+TRACK_FPS: float = 10.0      # assumed frame rate for velocity estimation
 # ---------------------------------------------------------------------------
 
 # LUT for depth colormap (faster than calling inferno per pixel each frame).
@@ -60,10 +93,29 @@ _INFERNO_LUT = (mpl_cm.inferno(np.linspace(0.0, 1.0, 256, dtype=np.float64))[:, 
     np.uint8
 )
 _SEG_LUT = np.zeros((256, 3), dtype=np.uint8)
-_SEG_LUT[0] = (255, 0, 0)
-_SEG_LUT[1] = (0, 0, 255)
-_SEG_LUT[2] = (0, 255, 0)
+# 3-class: 0=obstacle(red), 1=water(blue), 2=sky(green)
+# 9-class: 0=StaticObstacle, 1=Water, 2=Sky, 3=Boat, 4=Buoy,
+#          5=Swimmer, 6=Animal, 7=Float, 8=Other
+_SEG_LUT[0] = (255, 0, 0)       # Static Obstacle — red
+_SEG_LUT[1] = (0, 0, 255)       # Water — blue
+_SEG_LUT[2] = (0, 255, 0)       # Sky — green
+_SEG_LUT[3] = (255, 128, 0)     # Boat — orange
+_SEG_LUT[4] = (255, 0, 255)     # Buoy — magenta
+_SEG_LUT[5] = (255, 255, 0)     # Swimmer — yellow
+_SEG_LUT[6] = (128, 255, 255)   # Animal — cyan
+_SEG_LUT[7] = (180, 80, 255)    # Float — purple
+_SEG_LUT[8] = (255, 255, 255)   # Other — white
 _SEG_LUT[255] = (0, 0, 0)
+
+# Warning-level colours drawn on the RGB overlay (tuples are in RGB order
+# because we draw directly on the float/uint8 RGB array that PIL later
+# consumes — cv2 treats the tuple channel-blind).
+_WARNING_COLORS: dict[WarningLevel, tuple[int, int, int]] = {
+    WarningLevel.SAFE: (40, 200, 40),
+    WarningLevel.CAUTION: (255, 200, 40),
+    WarningLevel.IMMEDIATE_WARNING: (255, 50, 50),
+}
+_BANNER_HEIGHT: int = 40
 
 _SEG_HF_ID = "nvidia/mit-b0"  # matches ``segmentation._pipeline`` backbone
 
@@ -166,6 +218,233 @@ def _array_to_photo(arr: np.ndarray, max_side: int) -> ImageTk.PhotoImage:
     return ImageTk.PhotoImage(pil)
 
 
+def _draw_text_with_bg(
+    img: np.ndarray,
+    text: str,
+    org: tuple[int, int],
+    bg_color: tuple[int, int, int],
+    *,
+    scale: float = 0.55,
+    thickness: int = 1,
+) -> None:
+    """Draw text with a filled background rectangle onto an RGB array in-place."""
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    (tw, th), bl = cv2.getTextSize(text, font, scale, thickness)
+    x, y = org
+    x = max(0, x)
+    y = max(th + 4, y)
+    cv2.rectangle(
+        img,
+        (x, y - th - 4),
+        (x + tw + 6, y + bl),
+        bg_color,
+        thickness=-1,
+    )
+    cv2.putText(
+        img,
+        text,
+        (x + 3, y - 2),
+        font,
+        scale,
+        (0, 0, 0),
+        thickness,
+        cv2.LINE_AA,
+    )
+
+
+def _draw_status_banner(img: np.ndarray, level: WarningLevel) -> None:
+    """Draw the top status banner with the global warning level."""
+    H, W = img.shape[:2]
+    color = _WARNING_COLORS[level]
+    cv2.rectangle(img, (0, 0), (W, _BANNER_HEIGHT), color, thickness=-1)
+    text = f"STATUS: {level}"
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.95
+    thickness = 2
+    (tw, th), _ = cv2.getTextSize(text, font, scale, thickness)
+    tx = max(0, (W - tw) // 2)
+    ty = _BANNER_HEIGHT // 2 + th // 2
+    cv2.putText(img, text, (tx, ty), font, scale, (0, 0, 0), thickness, cv2.LINE_AA)
+
+
+def _apply_hysteresis(prev: WarningLevel, score: float) -> WarningLevel:
+    """Return the next warning level given previous level and current score.
+
+    Uses asymmetric enter/exit thresholds to suppress single-frame flicker.
+    `score` is the most-critical obstacle's risk score for the frame (0 if none).
+    """
+    if prev == WarningLevel.IMMEDIATE_WARNING:
+        if score < EXIT_IMMEDIATE:
+            return (
+                WarningLevel.CAUTION
+                if score >= EXIT_CAUTION
+                else WarningLevel.SAFE
+            )
+        return WarningLevel.IMMEDIATE_WARNING
+    if prev == WarningLevel.CAUTION:
+        if score >= ENTER_IMMEDIATE:
+            return WarningLevel.IMMEDIATE_WARNING
+        if score < EXIT_CAUTION:
+            return WarningLevel.SAFE
+        return WarningLevel.CAUTION
+    # prev == SAFE
+    if score >= ENTER_IMMEDIATE:
+        return WarningLevel.IMMEDIATE_WARNING
+    if score >= ENTER_CAUTION:
+        return WarningLevel.CAUTION
+    return WarningLevel.SAFE
+
+
+def _draw_corridor(
+    img: np.ndarray,
+    *,
+    hfov_deg: float,
+    corridor_half_m: float,
+    near_depth_m: float = 4.0,
+    far_depth_m: float = 20.0,
+) -> None:
+    """
+    Overlay the forward collision corridor as a pair of white lines forming
+    a trapezoid. Near depth maps to the image bottom; far depth maps to a
+    heuristic horizon row (≈ 45 % from the top). This is a rough visual
+    aid — no ground-plane calibration is performed.
+    """
+    H, W = img.shape[:2]
+    tan_half_fov = math.tan(math.radians(hfov_deg) / 2.0)
+    if tan_half_fov <= 0:
+        return
+    cx = W / 2.0
+
+    def _offset_px(depth_m: float) -> float:
+        if depth_m <= 1e-3:
+            return W / 2.0
+        lat_norm = corridor_half_m / (depth_m * tan_half_fov)
+        return lat_norm * (W / 2.0)
+
+    off_near = _offset_px(near_depth_m)
+    off_far = _offset_px(far_depth_m)
+
+    y_near = H - 1
+    y_far = int(H * 0.45)
+
+    def _clip_x(x: float) -> int:
+        return int(max(0, min(W - 1, x)))
+
+    pts_left = np.array(
+        [
+            [_clip_x(cx - off_near), y_near],
+            [_clip_x(cx - off_far), y_far],
+        ],
+        dtype=np.int32,
+    )
+    pts_right = np.array(
+        [
+            [_clip_x(cx + off_near), y_near],
+            [_clip_x(cx + off_far), y_far],
+        ],
+        dtype=np.int32,
+    )
+    line_color = (255, 255, 255)
+    cv2.polylines(img, [pts_left], False, line_color, 2, cv2.LINE_AA)
+    cv2.polylines(img, [pts_right], False, line_color, 2, cv2.LINE_AA)
+
+
+def _draw_risk_overlay(
+    rgb: np.ndarray,
+    frame_risk: FrameRisk,
+    *,
+    hfov_deg: float,
+    banner_level: WarningLevel | None = None,
+    tracked: list[TrackedObstacle] | None = None,
+) -> np.ndarray:
+    """Return a copy of `rgb` with corridor, bboxes, labels, and banner.
+
+    `banner_level` overrides the status banner (e.g. after hysteresis
+    smoothing); per-obstacle bbox colours still use the raw per-frame level.
+    `tracked` overlays track IDs + velocity/TTC on dynamic obstacles.
+    """
+    out = np.ascontiguousarray(rgb.copy())
+
+    if DRAW_CORRIDOR:
+        _draw_corridor(
+            out,
+            hfov_deg=hfov_deg,
+            corridor_half_m=W_BOAT / 2.0 + LAT_MARGIN,
+            near_depth_m=CORRIDOR_NEAR_M,
+            far_depth_m=CORRIDOR_FAR_M,
+        )
+
+    # Build a lookup from obstacle id() to TrackedObstacle for annotation
+    _track_lut: dict[int, TrackedObstacle] = {}
+    if tracked:
+        for t in tracked:
+            _track_lut[id(t.obstacle)] = t
+
+    _STATIC_COLOR = (160, 160, 160)
+    _MASK_ALPHA = 0.35  # transparency for dynamic obstacle mask overlay
+
+    for r in frame_risk.obstacle_risks:
+        obs = r.obstacle
+        trk = _track_lut.get(id(obs))
+
+        if obs.is_static:
+            # --- Static (shoreline): thin gray contour, no label ---
+            if obs.mask is not None:
+                contours, _ = cv2.findContours(
+                    obs.mask.astype(np.uint8),
+                    cv2.RETR_EXTERNAL,
+                    cv2.CHAIN_APPROX_SIMPLE,
+                )
+                cv2.drawContours(out, contours, -1, _STATIC_COLOR, 1, cv2.LINE_AA)
+        else:
+            # --- Dynamic obstacle: mask overlay + corner brackets + label ---
+            color = _WARNING_COLORS[r.warning_level]
+
+            # Semi-transparent mask overlay
+            if obs.mask is not None:
+                tint = np.array(color, dtype=np.uint8)
+                overlay_region = out[obs.mask]
+                blended = (
+                    overlay_region.astype(np.float32) * (1 - _MASK_ALPHA)
+                    + tint.astype(np.float32) * _MASK_ALPHA
+                ).astype(np.uint8)
+                out[obs.mask] = blended
+
+            # Label position from Kalman-smoothed bbox if available
+            if trk is not None and trk.smoothed_bbox is not None:
+                bx1, by1, _, _ = trk.smoothed_bbox
+            else:
+                bx1, by1 = obs.x1, obs.y1
+
+            # Info label
+            parts = []
+            if obs.class_id is not None:
+                _CLS_SHORT = {3: "Boat", 4: "Buoy", 5: "Swim", 6: "Anim", 7: "Float", 8: "Oth"}
+                parts.append(_CLS_SHORT.get(obs.class_id, f"C{obs.class_id}"))
+            if trk is not None:
+                parts.append(f"T{trk.track_id}")
+            parts.append(f"d={r.d_forward:.1f}m")
+            if trk is not None and trk.v_closing is not None:
+                if trk.v_closing > 0:
+                    parts.append(f"v={trk.v_closing:.1f}m/s")
+                else:
+                    parts.append("receding")
+            if trk is not None and trk.ttc is not None:
+                parts.append(f"TTC={trk.ttc:.1f}s")
+            parts.append(f"R={r.risk_score:.2f}")
+            label = " ".join(parts)
+            y_text = by1 - 6
+            if y_text < _BANNER_HEIGHT + 18:
+                y_text = by1 + 20
+            _draw_text_with_bg(out, label, (bx1, y_text), color)
+
+    _draw_status_banner(
+        out,
+        banner_level if banner_level is not None else frame_risk.global_warning,
+    )
+    return out
+
+
 def _format_current_frame_stats(idx: int, n: int, seg_s: float, depth_s: float) -> str:
     """This frame only: wall time from worker (GUI shows ms only)."""
     seg_s = max(float(seg_s), 1e-9)
@@ -224,6 +503,15 @@ class CombinedSequenceViewer:
         self._acc_seg_s = 0.0
         self._acc_depth_s = 0.0
         self._acc_timed_frames = 0
+        # Frame-level hysteresis state; updated only by the worker thread.
+        self._prev_warning_level: WarningLevel = WarningLevel.SAFE
+        # SORT tracker instance; lives in the worker thread.
+        self._tracker = ObstacleTracker(
+            max_age=TRACK_MAX_AGE,
+            min_hits=TRACK_MIN_HITS,
+            iou_threshold=TRACK_IOU_THRESH,
+            fps=TRACK_FPS,
+        )
 
         self.root = tk.Tk()
         pref = " + ".join(f"{p}*" for p in FILENAME_PREFIXES)
@@ -253,7 +541,7 @@ class CombinedSequenceViewer:
         panes = ttk.PanedWindow(main, orient=tk.HORIZONTAL)
         panes.pack(fill=tk.BOTH, expand=True)
 
-        rgb_f = ttk.LabelFrame(panes, text="RGB", padding=4)
+        rgb_f = ttk.LabelFrame(panes, text="RGB + Risk Overlay", padding=4)
         seg_f = ttk.LabelFrame(panes, text=f"Segmentation | SegFormer ({_SEG_HF_ID})", padding=4)
         dep_f = ttk.LabelFrame(
             panes,
@@ -417,7 +705,9 @@ class CombinedSequenceViewer:
                     else torch.device("cuda" if torch.cuda.is_available() else "cpu")
                 )
                 t0 = time.perf_counter()
-                mask = compute_segmentation_mask(rgb_small, self._seg_weights, seg_dev)
+                mask, boundary = compute_segmentation_and_boundary(
+                    rgb_small, self._seg_weights, seg_dev,
+                )
                 seg_s = time.perf_counter() - t0
                 seg_rgb = _seg_mask_to_rgb_u8(mask)
 
@@ -431,9 +721,39 @@ class CombinedSequenceViewer:
                     if self.est_scale != 1.0:
                         depth = depth * float(self.est_scale)
 
-                rgb = rgb_small
+                # Auto-detect model type and extract obstacles accordingly
+                if boundary is not None:
+                    # Multi-class instance-aware model
+                    obstacles = extract_obstacles_multiclass(
+                        mask, depth, return_masks=True, boundary_prob=boundary,
+                    )
+                else:
+                    # Legacy 3-class model
+                    obstacles = extract_obstacles(mask, depth, return_masks=True)
+                tracked = self._tracker.update(obstacles)
+                frame_risk = assess_frame(
+                    obstacles,
+                    hfov_deg=HFOV_DEG,
+                    w_boat=W_BOAT,
+                    lat_margin=LAT_MARGIN,
+                    d_safe=D_SAFE,
+                    l_safe=L_SAFE,
+                )
+                most = frame_risk.most_critical
+                cur_score = most.risk_score if most is not None else 0.0
+                smoothed_level = _apply_hysteresis(self._prev_warning_level, cur_score)
+                self._prev_warning_level = smoothed_level
+                rgb_overlay = _draw_risk_overlay(
+                    rgb_small,
+                    frame_risk,
+                    hfov_deg=HFOV_DEG,
+                    banner_level=smoothed_level,
+                    tracked=tracked,
+                )
                 dep_rgb = _depth_to_rgb_u8(depth)
-                self._result_q.put(("ok", rid, idx, rgb, seg_rgb, dep_rgb, seg_s, depth_s))
+                self._result_q.put(
+                    ("ok", rid, idx, rgb_overlay, seg_rgb, dep_rgb, seg_s, depth_s, frame_risk)
+                )
             except Exception as e:
                 self._result_q.put(("err", rid, idx, str(e)))
 
@@ -454,7 +774,7 @@ class CombinedSequenceViewer:
                 if item is None:
                     continue
                 if item[0] == "ok":
-                    _, rid, idx, rgb, seg_rgb, dep_rgb, seg_s, depth_s = item
+                    _, rid, idx, rgb, seg_rgb, dep_rgb, seg_s, depth_s, frame_risk = item
                     if rid != self._latest_req:
                         continue
                     self._photo_rgb = _array_to_photo(rgb, self._gui_preview_max)

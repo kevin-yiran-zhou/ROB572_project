@@ -1,0 +1,10 @@
+gradio_imageslider
+gradio
+matplotlib
+opencv-python
+torch
+torchvision
+transformers
+numpy
+pillow
+pandas

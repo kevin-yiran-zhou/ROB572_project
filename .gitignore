@@ -1,4 +1,21 @@
+# Datasets
 /WaterScenes_Samples
 /lars_v1.0.0_images_seq
+/lars_v1.0.0_images
+/lars_v1.0.0_annotations
 
+# Model weights
+segmentation/model/*.pth
+depth/model/base/
+depth/model/large/
+depth/model/small/
+
+# Eval outputs
+/eval_results*/
+
+# Python
 __pycache__/
+*.pyc
+
+# IDE / Claude
+.claude/

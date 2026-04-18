@@ -26,12 +26,16 @@ python eval_detection.py --image-dir lars_v1.0.0_images/val/images \
 
 # Specify output directory:
 python eval_detection.py --seq-dir ... --prefix ... --out-dir eval_results/
+
+# MODD2 left camera only (same as combined.py IMAGE_GLOB_PATTERN):
+python eval_detection.py --image-dir .../framesRectified --image-glob '*L.jpg' --out-dir eval_results/
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import fnmatch
 import json
 import os
 import sys
@@ -319,6 +323,14 @@ def collect_image_dir_paths(image_dir: Path, suffixes: list[str] = [".jpg", ".pn
     return sorted(p for p in image_dir.iterdir() if p.suffix.lower() in suffix_set)
 
 
+def _filter_paths_by_name_glob(paths: list[Path], pattern: str | None) -> list[Path]:
+    """Keep only paths whose basename matches fnmatch pattern (e.g. '*L.jpg' for MODD2 left camera)."""
+    if not pattern or not pattern.strip():
+        return paths
+    pat = pattern.strip()
+    return [p for p in paths if fnmatch.fnmatch(p.name, pat)]
+
+
 # ---------------------------------------------------------------------------
 # Main evaluation loop
 # ---------------------------------------------------------------------------
@@ -339,6 +351,10 @@ def run_eval(args: argparse.Namespace) -> None:
     else:
         print("ERROR: Provide --seq-dir (with --prefix) or --image-dir")
         sys.exit(1)
+
+    paths = _filter_paths_by_name_glob(paths, args.image_glob)
+    if args.image_glob and str(args.image_glob).strip():
+        print(f"  After --image-glob {args.image_glob!r}: {len(paths)} images")
 
     if not paths:
         print("No images found.")
@@ -632,6 +648,10 @@ def run_eval_v2(args: argparse.Namespace) -> None:
         print("ERROR: Provide --seq-dir (with --prefix) or --image-dir")
         sys.exit(1)
 
+    paths = _filter_paths_by_name_glob(paths, args.image_glob)
+    if args.image_glob and str(args.image_glob).strip():
+        print(f"  After --image-glob {args.image_glob!r}: {len(paths)} images")
+
     if not paths:
         print("No images found.")
         sys.exit(1)
@@ -905,6 +925,12 @@ def main():
                         help="Comma-separated filename prefixes (for --seq-dir)")
     parser.add_argument("--image-dir", type=str, default=None,
                         help="Flat image directory (alternative to --seq-dir)")
+    parser.add_argument(
+        "--image-glob",
+        type=str,
+        default=None,
+        help="Optional fnmatch on basenames after listing dir (e.g. '*L.jpg' for MODD2 left only).",
+    )
 
     # GT annotations (optional)
     parser.add_argument("--panoptic-json", type=str, default=None,

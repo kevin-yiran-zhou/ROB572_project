@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run evaluation on MODD2 rectified video sequences.
 # Usage: bash run_eval_modd2.sh
+# Left camera only (*L.jpg), matching combined.py IMAGE_GLOB_PATTERN.
 #
 # Prerequisites:
 #   - MODD2 data extracted under ./MODD2_video_data_rectified/
@@ -19,6 +20,7 @@ OUT1="eval_results_kope67"
 echo "=== Evaluating sequence 1: kope67 ==="
 python eval_detection.py \
     --image-dir "$SEQ1" \
+    --image-glob '*L.jpg' \
     --out-dir "$OUT1"
 
 echo "=== Generating plots for kope67 ==="
@@ -31,6 +33,7 @@ OUT2="eval_results_kope71"
 echo "=== Evaluating sequence 2: kope71 ==="
 python eval_detection.py \
     --image-dir "$SEQ2" \
+    --image-glob '*L.jpg' \
     --out-dir "$OUT2"
 
 echo "=== Generating plots for kope71 ==="

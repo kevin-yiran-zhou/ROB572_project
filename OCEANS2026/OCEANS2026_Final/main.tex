@@ -1,0 +1,94 @@
+% 1. Set the top margin to 0.75 inch
+\newcommand{\CLASSINPUTtoptextmargin}{0.75in}
+% 2. Set the side margins to 0.75 inch
+\newcommand{\CLASSINPUTinnersidemargin}{0.75in}
+\newcommand{\CLASSINPUToutersidemargin}{0.75in}
+\documentclass[conference,letterpaper]{IEEEtran}
+
+% \documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+% The preceding line is only needed to identify funding in the first footnote. If that is unneeded, please comment it out.
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+\usepackage{stfloats}
+\usepackage{cuted}
+\usepackage{caption}
+
+\IEEEoverridecommandlockouts
+
+% Tighten the wide-figure strip so the pipeline image sits close to the title.
+\setlength{\stripsep}{2pt plus 1pt minus 1pt}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+% 1.0 inch margin for first page
+\renewcommand{\IEEEtitletopspaceextra}{0.25in}
+
+\begin{document}
+
+% \title{Risk-Aware Water-Surface Obstacle Detection and Warning via Segmentation and Depth Estimation}
+\title{WARD: A Vision-Only Framework for Water-Surface Awareness and Risk Detection} %on Low-Cost ASVs}
+
+\author{
+    \IEEEauthorblockN{Yiran Zhou, Zheng Wang, Tianai Yan, Sacchin Sundar, Katherine A. Skinner}
+    \IEEEauthorblockA{University of Michigan, Ann Arbor, USA \\
+    \{yrzhou, zzww, tayanwu, sacchin, kskin\}@umich.edu}
+}
+
+\maketitle
+
+% \begingroup
+% \setlength{\abovecaptionskip}{24pt}
+% \setlength{\belowcaptionskip}{8pt}
+% \begin{strip}
+%   \vspace{-2.5em}
+%   \centering
+%   \includegraphics[width=0.9\textwidth]{images/pipeline.png}
+%   \captionof{figure}{Overview of the proposed framework. Monocular RGB frames are processed by SegFormer and Depth Anything V2 to extract semantic and depth cues, which are then fused to generate actionable safety warnings.}
+%   \label{fig:pipeline}
+% \end{strip}
+% \endgroup
+
+\begingroup
+\setlength{\abovecaptionskip}{6pt}
+\setlength{\belowcaptionskip}{6pt}
+\begin{strip}
+  \vskip-2em
+  \centering
+  % \includegraphics[width=0.9\textwidth]{images/pipeline.png}
+  \includegraphics[width=\textwidth]{images/pipeline.png}
+  \captionof{figure}{Overview of the proposed framework. Monocular RGB frames are processed by SegFormer and Depth Anything V2 to extract semantic and depth cues, which are then fused to generate actionable safety warnings.}
+  \label{fig:pipeline}
+\end{strip}
+\endgroup
+
+\begin{abstract}
+Safe navigation for Autonomous Surface Vehicles (ASVs) requires both accurate obstacle detection and actionable risk assessment. We propose WARD (Water-surface Awareness and Risk Detection), a vision-only, risk-aware framework that can output safety assessments for low-cost ASVs. WARD fuses SegFormer semantic segmentation with radar-calibrated Depth Anything V2 monocular depth using a novel continuous collision-corridor risk model. The risk model reasons jointly about proximity, lateral offset, and semantic hazards to produce human-interpretable safety alerts. An extended SORT tracker ensures stable Time-to-Collision predictions by filtering monocular depth noise. Operating at 13.7 FPS on a consumer-grade GPU, WARD provides reliable, discrete safety warnings (SAFE, CAUTION, IMMEDIATE) for resource-constrained ASVs.
+\end{abstract}
+
+\section{Introduction}
+\input{introduction}
+\section{Related Work}
+\input{related_work}
+\section{Technical Approach}
+\input{technical_approach}
+\section{Results}
+\input{results}
+\section{Conclusion}
+\input{conclusion}
+% \section{Future Works}
+% \input{future_works}
+
+\section*{Acknowledgments}
+AI tools such as ChatGPT and Google Gemini were used for language editing and formatting assistance.
+% This work was completed as part of the final project for ROB 572 Marine Robotics at the University of Michigan, Winter 2026. 
+% We acknowledge the use of AI coding assistants, such as Cursor and Google Gemini, for implementation support and writing assistance during the development of this work. The source code is available at \url{https://github.com/kevin-yiran-zhou/ROB572_project}.
+\input{references}
+
+\end{document}

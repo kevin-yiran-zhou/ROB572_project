@@ -1,0 +1,18 @@
+% %\subsection{Perception Component Performance}
+% We evaluated the segmentation backbone on the LaRS validation split. SegFormer achieves an obstacle recall of 96.51\%, substantially outperforming a DeepLab baseline (79.83\% recall) at comparable cost. This high recall is critical for safety-oriented ASV operation, where missed low-profile hazards such as buoys, swimmers, or floating debris can be catastrophic. For monocular depth, the evaluation was conducted using the radar data from the WaterScenes dataset, where the Base model provides a mean absolute error (MAE) of 4.04 m within the critical 0–20 m range. While the Large variant offers lower error (3.22\,m), its high latency is prohibitive for real-time edge navigation.
+
+% %\subsection{End-to-End Pipeline and Efficiency}
+% The integrated pipeline was evaluated on real-world maritime sequences from the MODD\cite{Kristan2015} dataset. As demonstrated by the qualitative results in Fig.~\ref{fig:pipeline_examples}, the system reliably distinguishes between stable and escalating risk states. The system maintains these transitions with high temporal stability; the warning distribution (62\% SAFE, 33\% CAUTION, 5\% IMMEDIATE) remained consistent with the obstacle dynamics, with no observed warning-level flicker.
+
+% In terms of computational efficiency, the total system latency is 73.0 ms, sustaining approximately 13.7 FPS on a NVIDIA RTX 4060 GPU. Depth estimation is the primary bottleneck (38.7 ms), followed by segmentation (26.9 ms) and risk reasoning (7.4 ms). 
+% % The system sustains 13.7 FPS (73.0 ms latency) on an RTX 4060 GPU. Latency is dominated by depth estimation (38.7 ms) and segmentation (26.9 ms), with minimal overhead for risk reasoning (7.4 ms).
+% This low overhead for risk reasoning leaves significant headroom for future integration of higher-rate sensors or more complex fusion logic.
+
+% \begin{figure}[t]
+%     \centering
+%     \includegraphics[width=\linewidth]{images/example1_safe.png}\\[2pt]
+%     \includegraphics[width=\linewidth]{images/example1_caution.png}
+%     \caption{Qualitative evaluation on a MODD sequence. As the tracked boat enters the virtual collision corridor, the system transitions from SAFE (top) to CAUTION (bottom). Each row shows the annotated RGB frame (left), semantic segmentation (center), and monocular depth map (right).\vspace{-4mm}}
+%     \label{fig:pipeline_examples}
+% \end{figure}
+

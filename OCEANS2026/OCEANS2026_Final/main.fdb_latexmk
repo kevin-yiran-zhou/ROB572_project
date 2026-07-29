@@ -1,13 +1,13 @@
 # Fdb version 4
-["bibtex main"] 1785271664.92445 "main.aux" "main.bbl" "main" 1785271666.00635 0
+["bibtex main"] 1785338782.76852 "main.aux" "main.bbl" "main" 1785338917.22892 0
   "./references.bib" 1785251993.35686 9397 0390c97d13379cfcaa4b8227d1aa1095 ""
   "/usr/share/texlive/texmf-dist/bibtex/bst/base/ieeetr.bst" 1292289607 18361 1a00e58565e7f19bf2b3e1bfb82254ae ""
-  "main.aux" 1785271665.71988 4569 de8377ff4ffcf5efb1935cd6842b2f7f "pdflatex"
+  "main.aux" 1785338916.92302 8756 f0bf66245b70f042274f72e0af5b8c63 "pdflatex"
   (generated)
   "main.bbl"
   "main.blg"
   (rewritten before read)
-["pdflatex"] 1785271665.06008 "/home/kevin-zhou/Desktop/UMich/Winter2026/ROB572_final_project/OCEANS2026/OCEANS2026_Final/main.tex" "main.pdf" "main" 1785271666.00655 0
+["pdflatex"] 1785338915.94365 "/home/kevin-zhou/Desktop/UMich/Winter2026/ROB572_final_project/OCEANS2026/OCEANS2026_Final/main.tex" "main.pdf" "main" 1785338917.22913 0
   "/etc/texmf/web2c/texmf.cnf" 1761586900.80362 475 c0e671620eb5563b2130f56340a5fde8 ""
   "/home/kevin-zhou/Desktop/UMich/Winter2026/ROB572_final_project/OCEANS2026/OCEANS2026_Final/main.tex" 1785271441.582 4194 8db8f36a59587dfc0cc5fdf78cb2e4ce ""
   "/usr/share/texlive/texmf-dist/fonts/enc/dvips/base/8r.enc" 1165713224 4850 80dc9bab7f31fb78a000ccfed0e27cab ""
@@ -125,17 +125,25 @@
   "/var/lib/texmf/fonts/map/pdftex/updmap/pdftex.map" 1761586931.14568 5472669 54eaf61a88b6b7896ebd0dac973cb29c ""
   "/var/lib/texmf/web2c/pdftex/pdflatex.fmt" 1761587081 8214465 a67f6dd7dbf9081f15148bc1ee4d7267 ""
   "IEEEtran.cls" 1785248439.92953 281957 5b2e4fa15b0f7eabb840ebf67df4c0f7 ""
-  "conclusion.tex" 1785263345.72447 1399 d9ab305bfdee1fae94ba977aab3cb409 ""
+  "conclusion.tex" 1785337193.12661 1399 d9ab305bfdee1fae94ba977aab3cb409 ""
+  "images/deeplabVSsegformer.png" 1785335567.02415 672797 1b8a8390cf2fd1e3c7779b0eebec97dd ""
+  "images/depth_estvsgt_1.png" 1785248439.93527 297852 6ffbbb53ffc0d8bb60ac14b337fd1325 ""
+  "images/depth_estvsgt_2.png" 1785248439.93642 48639 07e62b5ae9ce3671f3ad45ecf97dfa55 ""
+  "images/example1_caution.png" 1785336775.70489 135902 8aedbe7dbcf943ae150a1bf3e0afa8be ""
+  "images/example1_safe.png" 1785248439.93848 57712 3106b9d7cead2e401a8735d40f46f72e ""
+  "images/example1_warning.png" 1785336775.74589 135564 e641668726d105449840e4ac78ffe212 ""
+  "images/example2_caution.png" 1785248439.93929 52847 c8aac19250bec603858514b7cde3b605 ""
+  "images/example2_safe.png" 1785248439.94038 52315 856d55e1c1b3f7641b8aca95fc9d6079 ""
   "images/pipeline.png" 1785266773.28883 184569 6111ed5eb34955a13d20a82f0cb79c25 ""
-  "introduction.tex" 1785263068.63497 2080 5c9208170ea86be21ac4b42251f8b2c2 ""
-  "main.aux" 1785271665.71988 4569 de8377ff4ffcf5efb1935cd6842b2f7f "pdflatex"
-  "main.bbl" 1785271665.05443 3808 db30a64aa1810ad75591266512839365 "bibtex main"
-  "main.out" 1785271665.7204 2107 7bae5c0358b5ba9ae6cb421ca80fba3f "pdflatex"
+  "introduction.tex" 1785338277.05251 2935 1d072ddc2096710676fde832a066c1e0 ""
+  "main.aux" 1785338916.92302 8756 f0bf66245b70f042274f72e0af5b8c63 "pdflatex"
+  "main.bbl" 1785338782.88928 3808 db30a64aa1810ad75591266512839365 "bibtex main"
+  "main.out" 1785338916.92402 2799 7370dca75fcf9e50b71b6eaab0e9ee31 "pdflatex"
   "main.tex" 1785271441.582 4194 8db8f36a59587dfc0cc5fdf78cb2e4ce ""
   "references.tex" 1785248439.946 63 c856c4d8e59ac3904b3f64505671be84 ""
   "related_work.tex" 1785258926.03004 4607 e163ff9500ccdfb0cc4fa510050e2bbe ""
-  "results.tex" 1785266183.36861 2425 e7c00f47e59a87e496f4862eb0b08cdc ""
-  "technical_approach.tex" 1785271663.92648 12476 90fe6089463e0401b9de6267022ea78a ""
+  "results.tex" 1785338915.72006 10938 7e1b1d3949552906fdd021b3272c2ce7 ""
+  "technical_approach.tex" 1785338543.1396 14046 d0d37609207123c0f1918e82747e4d98 ""
   (generated)
   "main.aux"
   "main.log"

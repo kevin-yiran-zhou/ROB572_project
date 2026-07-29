@@ -5,5 +5,13 @@ In safety-critical navigation, a gap exists between perception accuracy and oper
 
 To bridge this gap, we propose WARD (Water-surface Awareness and Risk Detection), a vision-only (RGB), risk-aware framework that fuses SegFormer~\cite{xie2021segformersimpleefficientdesign} semantic segmentation with radar-calibrated Depth Anything V2~\cite{yang2024depthv2} monocular depth, as illustrated in Fig.~\ref{fig:pipeline}. WARD introduces a continuous collision-corridor risk model to reason jointly about proximity, lateral offset, closing velocity, and semantic hazard. By delivering actionable, real-time safety assessments (SAFE, CAUTION, and IMMEDIATE) from a single RGB stream, WARD offers a practical baseline for resource-constrained ASVs operating in dynamic environments.
 
-% 
+% In summary, this paper contributes:
+% \begin{itemize}
+%     \item an end-to-end, vision-only pipeline that fuses semantic segmentation and monocular depth through connected-component instance extraction, avoiding specialized ranging hardware;
+%     \item a radar-calibrated scaling strategy that restores near-range metric accuracy in a depth model pre-trained on road-driving imagery, within the band that matters most for collision warning;
+%     \item a continuous collision-corridor risk score that unifies RSS-style geometric reasoning with semantic class weighting and closing-velocity amplification, in place of a binary safe/unsafe decision; and
+%     \item a depth-augmented SORT tracker that jointly estimates bounding-box motion and closing velocity, yielding stable Time-to-Collision estimates despite noisy per-frame depth.
+% \end{itemize}
+
+%
 % We evaluate WARD on real-world maritime sequences, prioritizing safety-oriented metrics over segmentation accuracy alone and ensuring that the system remains reliable and viable for real-time deployment on resource-constrained ASVs.

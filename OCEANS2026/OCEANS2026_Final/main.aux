@@ -37,9 +37,42 @@
 \@writefile{toc}{\contentsline {section}{\numberline {III}Technical Approach}{2}{section.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-A}}Maritime Semantic Segmentation}{2}{subsection.3.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-B}}Monocular Depth Estimation}{2}{subsection.3.2}\protected@file@percent }
+\newlabel{eq:depth_cal}{{1}{2}{Monocular Depth Estimation}{equation.3.1}{}}
 \citation{shalevshwartz2018formalmodelsafescalable}
+\citation{zust2023larsdiversepanopticmaritime}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-C}}Multi-Object Tracking}{3}{subsection.3.3}\protected@file@percent }
+\newlabel{eq:kalman_state}{{2}{3}{Multi-Object Tracking}{equation.3.2}{}}
+\newlabel{eq:closing_velocity}{{3}{3}{Multi-Object Tracking}{equation.3.3}{}}
+\newlabel{eq:ttc}{{4}{3}{Multi-Object Tracking}{equation.3.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-D}}Collision-Risk Modeling}{3}{subsection.3.4}\protected@file@percent }
+\newlabel{eq:lateral_excess}{{5}{3}{Collision-Risk Modeling}{equation.3.5}{}}
+\newlabel{eq:risk_base}{{6}{3}{Collision-Risk Modeling}{equation.3.6}{}}
+\newlabel{eq:risk}{{7}{3}{Collision-Risk Modeling}{equation.3.7}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {IV}Results}{3}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-A}}Semantic Segmentation}{3}{subsection.4.1}\protected@file@percent }
+\citation{yao2024waterscenesmultitask4dradarcamera}
+\citation{Kristan2015}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Qualitative comparison of DeepLab and SegFormer on a representative maritime frame.}}{4}{figure.caption.3}\protected@file@percent }
+\newlabel{fig:seg_qual}{{2}{4}{Qualitative comparison of DeepLab and SegFormer on a representative maritime frame}{figure.caption.3}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {I}{\ignorespaces Comparison of DeepLab and SegFormer on the LaRS validation set.}}{4}{table.caption.1}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{tab:seg_compare}{{I}{4}{Comparison of DeepLab and SegFormer on the LaRS validation set}{table.caption.1}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {II}{\ignorespaces Per-class IoU on the segmentation test set (SegFormer).}}{4}{table.caption.2}\protected@file@percent }
+\newlabel{tab:per_class_iou}{{II}{4}{Per-class IoU on the segmentation test set (SegFormer)}{table.caption.2}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {III}{\ignorespaces Depth model comparison within 0--20\,m.}}{4}{table.caption.4}\protected@file@percent }
+\newlabel{tab:depth_compare}{{III}{4}{Depth model comparison within 0--20\,m}{table.caption.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-B}}Monocular Depth Estimation}{4}{subsection.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-C}}End-to-End Pipeline Performance}{4}{subsection.4.3}\protected@file@percent }
 \bibstyle{ieeetr}
 \bibdata{references}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Monocular depth evaluation against radar ground truth. Top: input RGB with projected radar range points (left) and the corresponding calibrated depth map (right). Bottom: estimated depth versus radar ground truth across the evaluation set; the dashed line marks perfect agreement.}}{5}{figure.caption.5}\protected@file@percent }
+\newlabel{fig:depth_qual}{{3}{5}{Monocular depth evaluation against radar ground truth. Top: input RGB with projected radar range points (left) and the corresponding calibrated depth map (right). Bottom: estimated depth versus radar ground truth across the evaluation set; the dashed line marks perfect agreement}{figure.caption.5}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {IV}{\ignorespaces Average inference latency of the end-to-end pipeline.}}{5}{table.caption.7}\protected@file@percent }
+\newlabel{tab:latency}{{IV}{5}{Average inference latency of the end-to-end pipeline}{table.caption.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-D}}Limitations}{5}{subsection.4.4}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Qualitative evaluation on two MODD sequences. Rows 1--3: a tracked boat closes distance and the system escalates from SAFE to CAUTION to IMMEDIATE WARNING. Rows 4--5: a tracked buoy produces a SAFE-to-CAUTION transition as the ASV approaches. Each row shows the annotated RGB frame (left), semantic segmentation (center), and monocular depth map (right).}}{5}{figure.caption.6}\protected@file@percent }
+\newlabel{fig:pipeline_qual}{{4}{5}{Qualitative evaluation on two MODD sequences. Rows 1--3: a tracked boat closes distance and the system escalates from SAFE to CAUTION to IMMEDIATE WARNING. Rows 4--5: a tracked buoy produces a SAFE-to-CAUTION transition as the ASV approaches. Each row shows the annotated RGB frame (left), semantic segmentation (center), and monocular depth map (right)}{figure.caption.6}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {V}Conclusion}{5}{section.5}\protected@file@percent }
 \bibcite{xie2021segformersimpleefficientdesign}{1}
 \bibcite{yang2024depthv2}{2}
 \bibcite{ronneberger2015unetconvolutionalnetworksbiomedical}{3}
@@ -48,13 +81,6 @@
 \bibcite{Kristan2015}{6}
 \bibcite{zust2023larsdiversepanopticmaritime}{7}
 \bibcite{yao2024waterscenesmultitask4dradarcamera}{8}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-C}}Multi-Object Tracking}{3}{subsection.3.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-D}}Collision-Risk Modeling}{3}{subsection.3.4}\protected@file@percent }
-\newlabel{eq:risk_base}{{1}{3}{Collision-Risk Modeling}{equation.3.1}{}}
-\newlabel{eq:risk}{{2}{3}{Collision-Risk Modeling}{equation.3.2}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {IV}Results}{3}{section.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {V}Conclusion}{3}{section.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{References}{3}{section*.2}\protected@file@percent }
 \bibcite{ranftl2020robustmonoculardepthestimation}{9}
 \bibcite{yang2024depthanything}{10}
 \bibcite{ke2025marigoldaffordableadaptationdiffusionbased}{11}
@@ -66,4 +92,5 @@
 \bibcite{iso22839}{17}
 \bibcite{fujii1971traffic}{18}
 \bibcite{qu2022real}{19}
-\gdef \@abspage@last{4}
+\@writefile{toc}{\contentsline {section}{References}{6}{section*.9}\protected@file@percent }
+\gdef \@abspage@last{6}
